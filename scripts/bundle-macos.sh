@@ -8,6 +8,9 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 app="$root/target/release/VimEdit.app"
+# Without this, cc and rustc target the build machine's macOS version, so the
+# app wouldn't launch on anything older. Keep in sync with Info.plist.
+export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.0}"
 version="$(sed -n 's/^version = "\(.*\)"/\1/p' "$root/Cargo.toml" | head -1)"
 
 cargo build --release --manifest-path "$root/Cargo.toml"
