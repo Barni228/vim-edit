@@ -26,8 +26,8 @@ a GitHub release.
   disk image. Built locally with `scripts/package-macos.sh`.
 - **Windows**: `dist/VimEdit-<version>-windows-x64-setup.exe`, an Inno Setup
   installer that registers VimEdit under *Open with* for `.txt` files. Built
-  locally with `scripts/package-windows.ps1` from a Developer PowerShell (it
-  needs Qt on `PATH` and Inno Setup 6).
+  locally with `scripts/package-windows.ps1` (it needs Visual Studio with the
+  C++ workload, Qt on `PATH`, and Inno Setup 6).
 
 The builds are not code-signed. On first launch, Windows SmartScreen needs
 *More info → Run anyway*. macOS needs *System Settings → Privacy & Security →
