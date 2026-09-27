@@ -1,0 +1,15 @@
+[package]
+name = "vim-edit"
+version = "0.1.0"
+edition = "2024"
+description = "A minimal plain-text editor built with Rust, Qt and QML"
+repository = "https://github.com/Barni228/vim-edit"
+readme = "README.md"
+
+[dependencies]
+cxx = "1"
+cxx-qt = "0.10"
+cxx-qt-lib = { version = "0.10", features = ["qt_full"] }
+
+[build-dependencies]
+cxx-qt-build = "0.10"
