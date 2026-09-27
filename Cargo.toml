@@ -1,6 +1,6 @@
 [package]
 name = "vim-edit"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "A minimal plain-text editor built with Rust, Qt and QML"
 repository = "https://github.com/Barni228/vim-edit"
