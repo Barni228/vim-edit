@@ -135,6 +135,47 @@ ApplicationWindow {
                 }
             }
 
+            // Search matches: the search being typed, or the last one until
+            // Esc. Like the block cursor below, they refresh after an edit
+            // finishes rather than halfway through one.
+            Item {
+                id: highlights
+
+                property var spans: []
+                readonly property var inputs: [editor.revision, vim.commandLine, vim.highlightPattern,
+                    vim.searchTarget, scrollView.contentItem.contentY, scrollView.contentItem.height]
+
+                function refresh() {
+                    spans = vim.searchHighlights();
+                }
+
+                onInputsChanged: Qt.callLater(refresh)
+
+                Repeater {
+                    model: highlights.spans
+
+                    Rectangle {
+                        required property var modelData
+                        readonly property rect startRect: editor.positionToRectangle(modelData.start)
+                        readonly property rect endRect: editor.positionToRectangle(modelData.end)
+
+                        x: startRect.x
+                        y: startRect.y
+                        width: endRect.x - startRect.x
+                        height: startRect.height
+                        color: modelData.match === vim.highlightTarget ? "#ff9f1a" : "#f5d547"
+
+                        // Redraw the matched text on top, dark on the highlight.
+                        Text {
+                            text: editor.getText(modelData.start, modelData.end)
+                            font: editor.font
+                            color: "black"
+                            textFormat: Text.PlainText
+                        }
+                    }
+                }
+            }
+
             // Other modes: a block over the character, or an underline in
             // replace mode (R, and r while it waits for the character).
             Rectangle {
@@ -200,12 +241,39 @@ ApplicationWindow {
         rightPadding: 8
 
         Label {
+            id: status
+
             anchors.left: parent.left
             anchors.right: position.left
             elide: Text.ElideRight
             font.family: editor.font.family
+            textFormat: Text.PlainText
             color: vim.commandLine === "" && vim.message !== "" && vim.messageIsError ? "#d33" : palette.windowText
-            text: vim.commandLine !== "" ? vim.commandLine + "\u2588" : vim.message || vim.modeLabel || " "
+            text: vim.commandLine || vim.message || vim.modeLabel || " "
+
+            FontMetrics {
+                id: statusMetrics
+
+                font: status.font
+            }
+
+            // Command-line cursor: a block over the character it's on.
+            Rectangle {
+                readonly property string character: vim.commandLine.charAt(vim.commandCursor)
+
+                visible: vim.commandLine !== ""
+                x: statusMetrics.advanceWidth(vim.commandLine.slice(0, vim.commandCursor))
+                width: character ? statusMetrics.advanceWidth(character) : statusMetrics.averageCharacterWidth
+                height: parent.height
+                color: status.color
+
+                Text {
+                    text: parent.character
+                    font: status.font
+                    color: status.palette.window
+                    textFormat: Text.PlainText
+                }
+            }
         }
 
         Label {
@@ -333,6 +401,10 @@ ApplicationWindow {
             macMenuBar.createObject(root, { window: root });
         else
             root.menuBar = windowMenuBar.createObject(root);
+
+        // The editor sits in a ScrollView, which is its own focus scope, so
+        // `focus: true` alone doesn't give it the keyboard.
+        editor.forceActiveFocus();
 
         const startup = doc.startupFile();
         if (startup)

@@ -23,6 +23,9 @@ QtObject {
     property string pendingKeys: ""
     property bool awaitingReplaceChar: false
     property string commandLine: ""
+    // Index in commandLine that the command-line cursor sits on (1 or more;
+    // index 0 holds the ":", "/" or "?").
+    property int commandCursor: 1
     property string message: ""
     property bool messageIsError: false
 
@@ -70,6 +73,21 @@ QtObject {
     property var replaceStack: []
     property bool syncing: false
     property bool replaying: false
+    // Command-line history: ":" commands, and "/" and "?" searches together.
+    property var history: ({ ":": [], "/": [] })
+    property int historyIndex: -1 // -1 while not browsing
+    property string historyTyped: ""
+    // While a search is typed: where Enter would jump (-1 if nowhere), and
+    // the view to go back to if the search is cancelled.
+    property int searchTarget: -1
+    property var searchView: null
+    // The last search stays highlighted until Esc in normal mode (or :noh).
+    property string highlightPattern: ""
+    // Start of the match to show as current: the one a typed search would
+    // jump to, otherwise the one under the cursor.
+    readonly property int highlightTarget: commandLine[0] === "/" || commandLine[0] === "?" ? searchTarget : cursor
+
+    onCommandLineChanged: previewSearch()
 
     // ---- Entry points ------------------------------------------------------
 
@@ -274,23 +292,100 @@ QtObject {
         return false;
     }
 
+    function openCommandLine(kind) {
+        commandCursor = 1;
+        commandLine = kind;
+    }
+
+    // Replaces commandLine[from, to) with text and puts the cursor after it.
+    function editCommandLine(from, to, text) {
+        commandCursor = from + text.length;
+        commandLine = commandLine.slice(0, from) + text + commandLine.slice(to);
+    }
+
     function commandLineKey(tok) {
+        if (tok === "<Up>" || tok === "<Down>") {
+            browseHistory(tok === "<Up>" ? -1 : 1);
+            return true;
+        }
+        const c = commandCursor, n = commandLine.length;
+        if (["<Left>", "<Right>", "<Home>", "<End>", "<C-b>", "<C-e>"].includes(tok)) {
+            commandCursor = tok === "<Left>" ? Math.max(1, c - 1)
+                : tok === "<Right>" ? Math.min(n, c + 1)
+                : tok === "<Home>" || tok === "<C-b>" ? 1 : n;
+            return true;
+        }
+        historyIndex = -1;
         if (tok === "<Esc>" || tok === "<C-c>") {
             commandLine = "";
         } else if (tok === "<CR>") {
             const line = commandLine;
+            if (searchTarget >= 0)
+                searchView = null; // keep the view on the match
             commandLine = "";
+            addToHistory(line);
             runCommandLine(line);
         } else if (tok === "<BS>") {
-            commandLine = commandLine.slice(0, -1);
+            if (n === 1)
+                commandLine = ""; // backspace on an empty line leaves it
+            else if (c > 1)
+                editCommandLine(c - 1, c, "");
+        } else if (tok === "<Del>") {
+            if (c < n)
+                editCommandLine(c, c + 1, "");
         } else if (tok === "<C-u>") {
-            commandLine = commandLine[0];
+            editCommandLine(1, c, "");
+        } else if (tok === "<C-w>") {
+            let s = c;
+            while (s > 1 && isBlank(commandLine[s - 1]))
+                s--;
+            const cls = charClass(commandLine[s - 1], false);
+            while (s > 1 && !isBlank(commandLine[s - 1]) && charClass(commandLine[s - 1], false) === cls)
+                s--;
+            editCommandLine(s, c, "");
         } else if (tok === "<Tab>") {
-            commandLine += "\t";
+            editCommandLine(c, c, "\t");
         } else if (tok !== null && !isSpecial(tok)) {
-            commandLine += tok;
+            editCommandLine(c, c, tok);
         }
         return true;
+    }
+
+    function historyList(kind) {
+        return history[kind === ":" ? ":" : "/"];
+    }
+
+    function addToHistory(line) {
+        const body = line.slice(1);
+        if (!body)
+            return;
+        const list = historyList(line[0]);
+        const i = list.indexOf(body);
+        if (i >= 0)
+            list.splice(i, 1);
+        list.push(body);
+        if (list.length > 200)
+            list.shift();
+    }
+
+    // Steps to the previous (-1) or next (1) entry that starts with what was
+    // typed before browsing; stepping past the newest restores the typed text.
+    function browseHistory(step) {
+        const kind = commandLine[0];
+        const list = historyList(kind);
+        if (historyIndex < 0) {
+            historyTyped = commandLine.slice(1);
+            historyIndex = list.length;
+        }
+        let i = historyIndex + step;
+        while (i >= 0 && i < list.length && !list[i].startsWith(historyTyped))
+            i += step;
+        if (i < 0)
+            return;
+        historyIndex = Math.min(i, list.length);
+        const text = kind + (i >= list.length ? historyTyped : list[i]);
+        commandCursor = text.length;
+        commandLine = text;
     }
 
     function feed(tok) {
@@ -676,7 +771,7 @@ QtObject {
         case ":":
         case "/":
         case "?":
-            commandLine = cmd.action;
+            openCommandLine(cmd.action);
             break;
         case "ZZ":
             writeRequested(true);
@@ -688,6 +783,9 @@ QtObject {
         case "zt":
         case "zb":
             scrollToCursor(cmd.action[1]);
+            break;
+        case "<Esc>":
+            highlightPattern = "";
             break;
         case "gv":
             if (lastVisual) {
@@ -735,7 +833,7 @@ QtObject {
             return;
         }
         if (a === ":" || a === "/" || a === "?") {
-            commandLine = a;
+            openCommandLine(a);
             return;
         }
 
@@ -1233,6 +1331,8 @@ QtObject {
             quitRequested(false);
         else if (["q!", "quit!", "qa!", "qall!"].includes(c))
             quitRequested(true);
+        else if (["noh", "nohl", "nohlsearch"].includes(c))
+            highlightPattern = "";
         else
             showError("E492: Not an editor command: " + c);
     }
@@ -1375,6 +1475,7 @@ QtObject {
                 return null;
             }
             const forward = m.name === "n" ? lastSearch.forward : !lastSearch.forward;
+            highlightPattern = lastSearch.pattern;
             const q = search(t, lastSearch.pattern, forward, count, p);
             return q === null ? null : { pos: q, type: "exclusive" };
         }
@@ -1384,6 +1485,7 @@ QtObject {
             if (!w)
                 return null;
             lastSearch = { pattern: "\\b" + w.text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b", forward: m.name === "*" };
+            highlightPattern = lastSearch.pattern;
             const q = search(t, lastSearch.pattern, lastSearch.forward, count, lastSearch.forward ? p : w.start);
             return q === null ? null : { pos: q, type: "exclusive" };
         }
@@ -1594,16 +1696,21 @@ QtObject {
         return 0;
     }
 
-    function search(t, pattern, forward, count, from) {
-        let re;
+    // A pattern that isn't a valid regular expression (e.g. while it's still
+    // being typed) is searched for literally.
+    function searchRegExp(pattern) {
         try {
-            re = new RegExp(pattern, "gm");
+            return new RegExp(pattern, "gm");
         } catch (e) {
-            re = new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gm");
+            return new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gm");
         }
+    }
+
+    function search(t, pattern, forward, count, from) {
+        const re = searchRegExp(pattern);
         let p = from;
         for (let i = 0; i < count; i++) {
-            const q = forward ? searchForward(re, t, p) : searchBackward(re, t, p);
+            const q = forward ? searchForward(re, t, p, false) : searchBackward(re, t, p, false);
             if (q < 0) {
                 showError("E486: Pattern not found: " + pattern);
                 return null;
@@ -1613,19 +1720,19 @@ QtObject {
         return p;
     }
 
-    function searchForward(re, t, p) {
+    function searchForward(re, t, p, quiet) {
         re.lastIndex = p + 1;
         let m = p + 1 <= t.length ? re.exec(t) : null;
         if (!m) {
             re.lastIndex = 0;
             m = re.exec(t);
-            if (m)
+            if (m && !quiet)
                 showMessage("search hit BOTTOM, continuing at TOP");
         }
         return m ? m.index : -1;
     }
 
-    function searchBackward(re, t, p) {
+    function searchBackward(re, t, p, quiet) {
         let before = -1, last = -1, m;
         re.lastIndex = 0;
         while ((m = re.exec(t)) !== null) {
@@ -1635,9 +1742,90 @@ QtObject {
             if (m[0] === "")
                 re.lastIndex++;
         }
-        if (before < 0 && last >= 0)
+        if (before < 0 && last >= 0 && !quiet)
             showMessage("search hit TOP, continuing at BOTTOM");
         return before >= 0 ? before : last;
+    }
+
+    // ---- Search preview ----------------------------------------------------
+
+    function typedSearch() {
+        const kind = commandLine[0];
+        return kind === "/" || kind === "?" ? commandLine.slice(1) : null;
+    }
+
+    // Like vim's 'incsearch': while a search is typed, scroll to the match
+    // Enter would jump to, and restore the view when the search is cancelled.
+    function previewSearch() {
+        const pattern = typedSearch();
+        if (pattern === null) {
+            if (searchView && flickable) {
+                flickable.contentX = searchView.x;
+                flickable.contentY = searchView.y;
+            }
+            searchView = null;
+            searchTarget = -1;
+            return;
+        }
+        if (!searchView && flickable)
+            searchView = { x: flickable.contentX, y: flickable.contentY };
+        const t = editor.text;
+        const re = searchRegExp(pattern);
+        searchTarget = pattern === "" ? -1
+            : commandLine[0] === "/" ? searchForward(re, t, cursor, true) : searchBackward(re, t, cursor, true);
+        if (!flickable)
+            return;
+        if (searchTarget < 0) {
+            flickable.contentX = searchView.x;
+            flickable.contentY = searchView.y;
+            return;
+        }
+        const r = editor.positionToRectangle(searchTarget);
+        const maxX = Math.max(0, flickable.contentWidth - flickable.width);
+        const maxY = Math.max(0, flickable.contentHeight - flickable.height);
+        const x = r.x < searchView.x || r.x + r.width > searchView.x + flickable.width
+            ? r.x - flickable.width / 2 : searchView.x;
+        const y = r.y < searchView.y || r.y + r.height > searchView.y + flickable.height
+            ? r.y - flickable.height / 2 : searchView.y;
+        flickable.contentX = Math.max(0, Math.min(x, maxX));
+        flickable.contentY = Math.max(0, Math.min(y, maxY));
+    }
+
+    // Matches of the search being typed (or else of the last search, until
+    // it's cleared) that fall in the visible lines, split into one
+    // { start, end, match } span per line, where match is where it starts.
+    function searchHighlights() {
+        const typed = typedSearch();
+        const pattern = typed !== null ? typed : highlightPattern;
+        if (!pattern)
+            return [];
+        const t = editor.text;
+        let from = 0, to = t.length;
+        if (flickable) {
+            const top = Math.floor((flickable.contentY - editor.topPadding) / lineHeight);
+            const bottom = Math.ceil((flickable.contentY + flickable.height - editor.topPadding) / lineHeight);
+            from = lineToPos(t, Math.max(top, 0) + 1);
+            to = lineEnd(t, lineToPos(t, Math.max(bottom, 0) + 1));
+        }
+        const re = searchRegExp(pattern);
+        const spans = [];
+        re.lastIndex = from;
+        let m;
+        while ((m = re.exec(t)) !== null && m.index <= to && spans.length < 5000) {
+            if (m[0] === "") {
+                re.lastIndex++;
+                continue;
+            }
+            const end = m.index + m[0].length;
+            for (let s = m.index; s < end;) {
+                const nl = t.indexOf("\n", s);
+                const e = nl < 0 || nl > end ? end : nl;
+                if (e > s)
+                    spans.push({ start: s, end: e, match: m.index });
+                s = e + 1;
+            }
+        }
+        return spans;
     }
 
     function wordAt(t, p) {

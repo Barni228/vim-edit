@@ -14,7 +14,13 @@ The editor starts in normal mode. It supports the common vim commands:
   `i{ a{ ip ap` and so on), plus `x X s S C D Y p P J r ~ u Ctrl-R .`
 - Registers: yanks and deletes stay inside the editor. Use `"+` or `"*` for the
   system clipboard, and `"a`–`"z` for named registers.
-- `/`, `?`, `:w`, `:q`, `:q!`, `:wq`, `:x`, `:<line>`, `ZZ`, `ZQ`.
+- `/`, `?`, `:w`, `:q`, `:q!`, `:wq`, `:x`, `:<line>`, `ZZ`, `ZQ`. Up and Down on
+  the command line go through earlier commands or searches that start with what
+  you've typed.
+- While you type a search, matches are highlighted and the view scrolls to the
+  one Enter would jump to. They stay highlighted until you press Esc (or `:noh`).
+- The command line can be edited with Left/Right, Home/End, Delete, `Ctrl-W` and
+  `Ctrl-U`.
 
 ## Install
 
