@@ -11,6 +11,8 @@ ApplicationWindow {
     readonly property bool isMac: Qt.platform.os === "osx"
     property string filePath: ""
     property bool modified: false
+    readonly property int defaultFontSize: 16
+    property int fontSize: defaultFontSize
 
     width: 900
     height: 650
@@ -32,6 +34,10 @@ ApplicationWindow {
 
     function saveAs() {
         saveDialog.open();
+    }
+
+    function zoom(step) {
+        fontSize = Math.max(6, Math.min(72, fontSize + step));
     }
 
     function insertSettings() {
@@ -90,12 +96,11 @@ ApplicationWindow {
         TextArea {
             id: editor
 
-            // Bumped on every edit, so bindings that call methods (which QML
-            // can't track) re-evaluate.
+            // Bumped on every edit, for things that must refresh after one.
             property int revision: 0
 
             font.family: root.isMac ? "Menlo" : "Consolas"
-            font.pointSize: 13
+            font.pointSize: root.fontSize
             textFormat: TextEdit.PlainText
             wrapMode: TextEdit.NoWrap
             selectByMouse: true
@@ -143,9 +148,14 @@ ApplicationWindow {
 
                 property var spans: []
                 readonly property var inputs: [editor.revision, vim.commandLine, vim.highlightPattern,
-                    vim.searchTarget, scrollView.contentItem.contentY, scrollView.contentItem.height]
+                    vim.searchTarget, scrollView.contentItem.contentY, scrollView.contentItem.height,
+                    editor.contentWidth, editor.contentHeight] // these follow font size changes
 
                 function refresh() {
+                    // The Repeater keeps its delegates when the new spans equal
+                    // the old ones, but after a relayout their rectangles must
+                    // be recomputed, so always start from an empty model.
+                    spans = [];
                     spans = vim.searchHighlights();
                 }
 
@@ -201,8 +211,19 @@ ApplicationWindow {
                     function onRevisionChanged() {
                         Qt.callLater(block.refresh);
                     }
-                    // Also covers layout changes, like padding set by the style.
+                    // Also follow layout changes: padding set by the style, and
+                    // font size changes (which move the cursor rectangle only
+                    // once it's next updated, so also watch the content size).
                     function onCursorRectangleChanged() {
+                        Qt.callLater(block.refresh);
+                    }
+                    function onFontChanged() {
+                        Qt.callLater(block.refresh);
+                    }
+                    function onContentWidthChanged() {
+                        Qt.callLater(block.refresh);
+                    }
+                    function onContentHeightChanged() {
                         Qt.callLater(block.refresh);
                     }
                 }
@@ -215,10 +236,17 @@ ApplicationWindow {
                 }
                 Component.onCompleted: refresh()
 
+                TextMetrics {
+                    id: charMetrics
+
+                    font: editor.font
+                    text: block.character || " "
+                }
+
                 visible: vim.mode !== "insert"
                 x: cell.x
                 y: underline ? cell.y + cell.height - height : cell.y
-                width: character ? metrics.advanceWidth(character) : metrics.averageCharacterWidth
+                width: charMetrics.advanceWidth
                 height: underline ? Math.max(2, Math.round(cell.height / 8)) : cell.height
                 color: editor.color
                 opacity: editor.activeFocus ? 1 : 0.4
@@ -247,23 +275,35 @@ ApplicationWindow {
             anchors.right: position.left
             elide: Text.ElideRight
             font.family: editor.font.family
+            font.pointSize: editor.font.pointSize
             textFormat: Text.PlainText
             color: vim.commandLine === "" && vim.message !== "" && vim.messageIsError ? "#d33" : palette.windowText
             text: vim.commandLine || vim.message || vim.modeLabel || " "
 
-            FontMetrics {
-                id: statusMetrics
+            // Measured with TextMetrics, whose widths are properties, so they
+            // follow font size changes (FontMetrics.advanceWidth() is a call).
+            TextMetrics {
+                id: beforeCursor
 
                 font: status.font
+                text: vim.commandLine.slice(0, vim.commandCursor)
+            }
+            TextMetrics {
+                id: underCursor
+
+                font: status.font
+                text: commandCursor.character || " "
             }
 
             // Command-line cursor: a block over the character it's on.
             Rectangle {
+                id: commandCursor
+
                 readonly property string character: vim.commandLine.charAt(vim.commandCursor)
 
                 visible: vim.commandLine !== ""
-                x: statusMetrics.advanceWidth(vim.commandLine.slice(0, vim.commandCursor))
-                width: character ? statusMetrics.advanceWidth(character) : statusMetrics.averageCharacterWidth
+                x: beforeCursor.advanceWidth
+                width: underCursor.advanceWidth
                 height: parent.height
                 color: status.color
 
@@ -281,10 +321,8 @@ ApplicationWindow {
 
             anchors.right: parent.right
             font.family: editor.font.family
-            text: {
-                editor.revision;
-                return vim.pendingKeys + "    " + vim.positionLabel();
-            }
+            font.pointSize: editor.font.pointSize
+            text: vim.pendingKeys + "    " + vim.positionLabel()
         }
     }
 
@@ -354,6 +392,25 @@ ApplicationWindow {
                     onTriggered: Qt.quit()
                 }
             }
+            Platform.Menu {
+                title: qsTr("View")
+
+                Platform.MenuItem {
+                    text: qsTr("Zoom In")
+                    shortcut: "Ctrl+="
+                    onTriggered: root.zoom(1)
+                }
+                Platform.MenuItem {
+                    text: qsTr("Zoom Out")
+                    shortcut: StandardKey.ZoomOut
+                    onTriggered: root.zoom(-1)
+                }
+                Platform.MenuItem {
+                    text: qsTr("Actual Size")
+                    shortcut: "Ctrl+0"
+                    onTriggered: root.fontSize = root.defaultFontSize
+                }
+            }
         }
     }
 
@@ -391,6 +448,25 @@ ApplicationWindow {
                     text: qsTr("E&xit")
                     shortcut: "Ctrl+Q"
                     onTriggered: Qt.quit()
+                }
+            }
+            Menu {
+                title: qsTr("&View")
+
+                Action {
+                    text: qsTr("Zoom &In")
+                    shortcut: "Ctrl+="
+                    onTriggered: root.zoom(1)
+                }
+                Action {
+                    text: qsTr("Zoom &Out")
+                    shortcut: StandardKey.ZoomOut
+                    onTriggered: root.zoom(-1)
+                }
+                Action {
+                    text: qsTr("&Actual Size")
+                    shortcut: "Ctrl+0"
+                    onTriggered: root.fontSize = root.defaultFontSize
                 }
             }
         }

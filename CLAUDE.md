@@ -55,6 +55,10 @@ VimEdit: a plain-text editor in Rust + Qt 6 via cxx-qt 0.10, with the UI in QML.
   doesn't open the accent picker on held keys and only vim edits the text. Vim keeps its
   own undo stack (diffs per change), so native undo (Cmd+Z) is routed to it. Only the
   `"+`/`"*` registers use the system clipboard, via `Document.clipboardText()`.
+- Don't make a QML binding depend on something by reading it as a bare statement
+  (`editor.revision;`): the app's QML is compiled ahead of time, which can drop it,
+  though `qmltestrunner` keeps it. Use the value, e.g. `TextMetrics.advanceWidth`
+  instead of `FontMetrics.advanceWidth()`, or refresh imperatively.
 - To test `Vim.qml` without the Rust app, load it from a `qmltestrunner` test
   (`import "file:/abs/path/qml"`) with a `TextArea` and send keys with `keyClick`.
 
