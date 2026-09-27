@@ -376,13 +376,13 @@ ApplicationWindow {
                 }
                 Platform.MenuItem {
                     text: qsTr("Save As…")
-                    shortcut: "Ctrl+Shift+S"
+                    shortcut: StandardKey.SaveAs
                     onTriggered: root.saveAs()
                 }
                 Platform.MenuItem {
                     text: qsTr("Settings…")
                     role: Platform.MenuItem.PreferencesRole
-                    shortcut: "Ctrl+," // Ctrl is mapped to Cmd on macOS
+                    shortcut: StandardKey.Preferences
                     onTriggered: root.insertSettings()
                 }
                 Platform.MenuItem {
@@ -397,7 +397,7 @@ ApplicationWindow {
 
                 Platform.MenuItem {
                     text: qsTr("Zoom In")
-                    shortcut: "Ctrl+="
+                    shortcut: StandardKey.ZoomIn
                     onTriggered: root.zoom(1)
                 }
                 Platform.MenuItem {
@@ -407,7 +407,7 @@ ApplicationWindow {
                 }
                 Platform.MenuItem {
                     text: qsTr("Actual Size")
-                    shortcut: "Ctrl+0"
+                    shortcut: "Ctrl+0" // no StandardKey; Qt maps Ctrl to Cmd
                     onTriggered: root.fontSize = root.defaultFontSize
                 }
             }
@@ -434,12 +434,13 @@ ApplicationWindow {
                 }
                 Action {
                     text: qsTr("Save &As…")
-                    shortcut: "Ctrl+Shift+S"
+                    shortcut: StandardKey.SaveAs
                     onTriggered: root.saveAs()
                 }
                 MenuSeparator {}
                 Action {
                     text: qsTr("Se&ttings")
+                    // Preferences and Quit have no Ctrl binding on Windows.
                     shortcut: "Ctrl+,"
                     onTriggered: root.insertSettings()
                 }
@@ -455,7 +456,7 @@ ApplicationWindow {
 
                 Action {
                     text: qsTr("Zoom &In")
-                    shortcut: "Ctrl+="
+                    shortcut: StandardKey.ZoomIn
                     onTriggered: root.zoom(1)
                 }
                 Action {
@@ -465,7 +466,7 @@ ApplicationWindow {
                 }
                 Action {
                     text: qsTr("&Actual Size")
-                    shortcut: "Ctrl+0"
+                    shortcut: "Ctrl+0" // no StandardKey for this
                     onTriggered: root.fontSize = root.defaultFontSize
                 }
             }

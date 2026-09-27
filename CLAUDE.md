@@ -33,8 +33,11 @@ VimEdit: a plain-text editor in Rust + Qt 6 via cxx-qt 0.10, with the UI in QML.
   created in `Component.onCompleted`, so only one exists at a time.
 - Qt titles the PreferencesRole item "Preferences..."; a `QTranslator` for the
   `MAC_APPLICATION_MENU` context renames it to "Settings…".
-- "Ctrl+," is written as a plain string: Qt maps Ctrl to Cmd on macOS, and
-  `StandardKey.Preferences` is empty on Windows.
+- **Shortcuts**: use `StandardKey` where Qt has a binding. `StandardKey.ZoomIn` also
+  fires on Cmd/Ctrl+= (tested), even though Qt lists only Ctrl++. The Windows/Linux menu
+  writes "Ctrl+," and "Ctrl+Q" as plain strings, because `Preferences` and `Quit` have no
+  Ctrl binding on Windows. "Ctrl+0" has no `StandardKey`. In strings, Qt maps Ctrl to
+  Cmd on macOS.
 - **Open With**: macOS delivers a `QFileOpenEvent` (argv holds no path), which the C++
   filter forwards to `Document.openFile` by method name. Windows and Linux pass the
   path in argv, which `startupFile()` reads.
