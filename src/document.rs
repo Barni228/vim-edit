@@ -40,6 +40,12 @@ pub mod qobject {
 
         #[qinvokable]
         fn url_to_path(self: &Document, url: &QUrl) -> QString;
+
+        #[qinvokable]
+        fn clipboard_text(self: &Document) -> QString;
+
+        #[qinvokable]
+        fn set_clipboard_text(self: &Document, text: &QString);
     }
 
     impl cxx_qt::Initialize for Document {}
@@ -86,5 +92,13 @@ impl qobject::Document {
 
     fn url_to_path(&self, url: &QUrl) -> QString {
         url.to_local_file().unwrap_or_default()
+    }
+
+    fn clipboard_text(&self) -> QString {
+        platform::ffi::clipboard_text()
+    }
+
+    fn set_clipboard_text(&self, text: &QString) {
+        platform::ffi::set_clipboard_text(text);
     }
 }

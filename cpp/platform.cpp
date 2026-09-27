@@ -2,7 +2,9 @@
 
 #include <QtCore/QCoreApplication>
 #include <QtCore/QTranslator>
+#include <QtGui/QClipboard>
 #include <QtGui/QFileOpenEvent>
+#include <QtGui/QGuiApplication>
 
 namespace {
 
@@ -66,4 +68,16 @@ useSettingsMenuTitle()
 {
   auto* app = QCoreApplication::instance();
   app->installTranslator(new MacMenuTranslator(app));
+}
+
+QString
+clipboardText()
+{
+  return QGuiApplication::clipboard()->text();
+}
+
+void
+setClipboardText(const QString& text)
+{
+  QGuiApplication::clipboard()->setText(text);
 }

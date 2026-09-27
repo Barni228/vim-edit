@@ -7,8 +7,11 @@ VimEdit: a plain-text editor in Rust + Qt 6 via cxx-qt 0.10, with the UI in QML.
 - `src/main.rs`: creates the app, installs the "Settings…" translator, loads `qml/main.qml`.
 - `src/document.rs`: `Document` QObject (QML element) that reads and writes files.
 - `src/platform.rs` + `cpp/platform.{h,cpp}`: C++ helpers, namely the macOS `QFileOpenEvent`
-  filter and the app-menu translator.
-- `qml/main.qml`: the window, the editor (`TextArea`), dialogs and menus.
+  filter, the app-menu translator, and clipboard access.
+- `qml/main.qml`: the window, the editor (`TextArea`), the vim cursor and status line,
+  dialogs and menus.
+- `qml/Vim.qml`: the vim emulation (modes, motions, operators, registers, undo, `:` and
+  `/` command line). It drives the `TextArea` through `insert`/`remove`/`select`.
 - `scripts/`: `bundle-macos.sh` (makes the `.app`), `package-macos.sh` (makes the `.dmg`),
   `package-windows.ps1` (runs windeployqt, then builds the Inno Setup installer).
 - `packaging/`: `Info.plist` (with `@VERSION@` placeholder), `installer.iss`, and a
@@ -45,6 +48,15 @@ VimEdit: a plain-text editor in Rust + Qt 6 via cxx-qt 0.10, with the UI in QML.
 - **Windows**: the MSVC CRT DLLs are copied app-locally, so no VC++ Redistributable is
   needed. `package-windows.ps1` loads the VS dev shell itself; `ilammy/msvc-dev-cmd`
   was removed because it's stuck on Node 20.
+
+- **Vim**: `Vim.qml` owns the cursor (`vim.cursor` is the character under the block) and
+  draws it as an overlay inside the `TextArea`. Insert mode uses the `TextArea`'s own
+  cursor (`cursorDelegate`). Outside insert mode the `TextArea` is `readOnly`, so macOS
+  doesn't open the accent picker on held keys and only vim edits the text. Vim keeps its
+  own undo stack (diffs per change), so native undo (Cmd+Z) is routed to it. Only the
+  `"+`/`"*` registers use the system clipboard, via `Document.clipboardText()`.
+- To test `Vim.qml` without the Rust app, load it from a `qmltestrunner` test
+  (`import "file:/abs/path/qml"`) with a `TextArea` and send keys with `keyClick`.
 
 ## CI and releases
 

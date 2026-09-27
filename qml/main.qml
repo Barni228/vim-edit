@@ -35,7 +35,7 @@ ApplicationWindow {
     }
 
     function insertSettings() {
-        editor.insert(editor.cursorPosition, "Settings");
+        vim.externalEdit(() => editor.insert(editor.cursorPosition, "Settings"));
         editor.forceActiveFocus();
     }
 
@@ -44,7 +44,7 @@ ApplicationWindow {
 
         onLoaded: (path, text) => {
             editor.text = text;
-            editor.cursorPosition = 0;
+            vim.reset();
             root.filePath = path;
             root.modified = false;
             editor.forceActiveFocus();
@@ -55,18 +55,168 @@ ApplicationWindow {
         }
     }
 
+    Vim {
+        id: vim
+
+        editor: editor
+        flickable: scrollView.contentItem
+        clipboard: doc
+        lineHeight: metrics.lineSpacing
+
+        onWriteRequested: quit => {
+            root.save();
+            if (quit && !root.modified)
+                Qt.quit();
+        }
+        onQuitRequested: force => {
+            if (force || !root.modified)
+                Qt.quit();
+            else
+                vim.showError("E37: No write since last change (add ! to override)");
+        }
+    }
+
+    FontMetrics {
+        id: metrics
+
+        font: editor.font
+    }
+
     ScrollView {
+        id: scrollView
+
         anchors.fill: parent
 
         TextArea {
             id: editor
 
+            // Bumped on every edit, so bindings that call methods (which QML
+            // can't track) re-evaluate.
+            property int revision: 0
+
             font.family: root.isMac ? "Menlo" : "Consolas"
             font.pointSize: 13
+            textFormat: TextEdit.PlainText
             wrapMode: TextEdit.NoWrap
             selectByMouse: true
+            readOnly: true // vim starts in normal mode
             focus: true
-            onTextChanged: root.modified = true
+            onTextChanged: {
+                root.modified = true;
+                revision++;
+            }
+            onCursorPositionChanged: vim.syncFromEditor()
+            onSelectedTextChanged: vim.syncFromEditor()
+            Keys.onPressed: event => event.accepted = vim.handleKey(event)
+
+            // Insert mode: a blinking bar.
+            cursorDelegate: Rectangle {
+                id: bar
+
+                property bool blinkOn: true
+
+                width: 2
+                color: editor.color
+                visible: vim.mode === "insert" && editor.activeFocus && blinkOn
+
+                Timer {
+                    interval: 530
+                    repeat: true
+                    running: vim.mode === "insert" && editor.activeFocus
+                    onRunningChanged: bar.blinkOn = true
+                    onTriggered: bar.blinkOn = !bar.blinkOn
+                }
+                Connections {
+                    target: editor
+
+                    function onCursorPositionChanged() {
+                        bar.blinkOn = true;
+                    }
+                }
+            }
+
+            // Other modes: a block over the character, or an underline in
+            // replace mode (R, and r while it waits for the character).
+            Rectangle {
+                id: block
+
+                property rect cell
+                property string character
+                readonly property bool underline: vim.cursorShape === "underline"
+
+                // Runs after the current edit finishes: while editor.remove()
+                // runs, the document is already shorter but editor.length isn't
+                // updated yet, and asking for a position then warns.
+                function refresh() {
+                    const pos = Math.min(vim.cursor, editor.length);
+                    cell = editor.positionToRectangle(pos);
+                    const c = pos < editor.length ? editor.getText(pos, pos + 1) : "";
+                    character = c === "\t" || c === "\n" || c === "\u2029" ? "" : c;
+                }
+
+                Connections {
+                    target: editor
+
+                    function onRevisionChanged() {
+                        Qt.callLater(block.refresh);
+                    }
+                    // Also covers layout changes, like padding set by the style.
+                    function onCursorRectangleChanged() {
+                        Qt.callLater(block.refresh);
+                    }
+                }
+                Connections {
+                    target: vim
+
+                    function onCursorChanged() {
+                        Qt.callLater(block.refresh);
+                    }
+                }
+                Component.onCompleted: refresh()
+
+                visible: vim.mode !== "insert"
+                x: cell.x
+                y: underline ? cell.y + cell.height - height : cell.y
+                width: character ? metrics.advanceWidth(character) : metrics.averageCharacterWidth
+                height: underline ? Math.max(2, Math.round(cell.height / 8)) : cell.height
+                color: editor.color
+                opacity: editor.activeFocus ? 1 : 0.4
+
+                Text {
+                    visible: !parent.underline
+                    text: parent.character
+                    font: editor.font
+                    color: editor.palette.base
+                    textFormat: Text.PlainText
+                }
+            }
+        }
+    }
+
+    footer: Pane {
+        contentHeight: position.implicitHeight
+        padding: 4
+        leftPadding: 8
+        rightPadding: 8
+
+        Label {
+            anchors.left: parent.left
+            anchors.right: position.left
+            elide: Text.ElideRight
+            font.family: editor.font.family
+            color: vim.commandLine === "" && vim.message !== "" && vim.messageIsError ? "#d33" : palette.windowText
+            text: vim.commandLine !== "" ? vim.commandLine + "\u2588" : vim.message || vim.modeLabel || " "
+        }
+
+        Label {
+            id: position
+
+            anchors.right: parent.right
+            font.family: editor.font.family
+            text: {
+                editor.revision;
+                return vim.pendingKeys + "    " + vim.positionLabel();
+            }
         }
     }
 
