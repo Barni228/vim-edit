@@ -7,9 +7,6 @@ on:
   pull_request:
   workflow_dispatch:
 
-env:
-  QT_VERSION: "6.11.*"
-
 jobs:
   windows:
     runs-on: windows-latest
@@ -24,9 +21,11 @@ jobs:
         with:
           arch: x64
 
+      # Qt 6.11+ for Windows uses a repository layout that aqtinstall 3.3
+      # can't read yet, so stay on 6.10 here until it does.
       - uses: jurplel/install-qt-action@v4
         with:
-          version: ${{ env.QT_VERSION }}
+          version: "6.10.*"
           arch: win64_msvc2022_64
           cache: true
           # Older aqtinstall releases can't download recent Qt versions.
@@ -55,7 +54,7 @@ jobs:
 
       - uses: jurplel/install-qt-action@v4
         with:
-          version: ${{ env.QT_VERSION }}
+          version: "6.11.*"
           cache: true
           # Older aqtinstall releases can't download recent Qt versions.
           aqtversion: ">=3.1"
