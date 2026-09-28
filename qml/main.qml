@@ -13,6 +13,9 @@ ApplicationWindow {
     property bool modified: false
     readonly property int defaultFontSize: 16
     property int fontSize: defaultFontSize
+    // Every line is this tall, even one with an emoji (see fixLineHeight).
+    // The extra space keeps an emoji clear of the lines around it.
+    readonly property int lineHeight: Math.ceil(metrics.lineSpacing * 1.25)
 
     width: 900
     height: 650
@@ -40,6 +43,22 @@ ApplicationWindow {
         fontSize = Math.max(6, Math.min(72, fontSize + step));
     }
 
+    // An emoji comes from a taller font than the editor's, which makes its line
+    // taller. Give every line the same height instead. The block format that
+    // does this counts as an edit, but isn't one.
+    function fixLineHeight() {
+        const wasModified = modified;
+        doc.setLineHeight(editor.textDocument, lineHeight);
+        modified = wasModified;
+    }
+
+    onLineHeightChanged: fixLineHeight()
+
+    function toggleHidden() {
+        vim.toggleHidden();
+        editor.forceActiveFocus();
+    }
+
     function insertSettings() {
         vim.externalEdit(() => editor.insert(editor.cursorPosition, "Settings"));
         editor.forceActiveFocus();
@@ -50,6 +69,7 @@ ApplicationWindow {
 
         onLoaded: (path, text) => {
             editor.text = text;
+            root.fixLineHeight(); // setting the text reset it
             vim.reset();
             root.filePath = path;
             root.modified = false;
@@ -67,7 +87,7 @@ ApplicationWindow {
         editor: editor
         flickable: scrollView.contentItem
         clipboard: doc
-        lineHeight: metrics.lineSpacing
+        lineHeight: root.lineHeight
 
         onWriteRequested: quit => {
             root.save();
@@ -99,11 +119,57 @@ ApplicationWindow {
             // Bumped on every edit, for things that must refresh after one.
             property int revision: 0
 
+            // The rectangle of the character at pos. positionToRectangle gives
+            // a line with an emoji its natural height, but every line is
+            // root.lineHeight tall (see fixLineHeight), so snap to that.
+            function cellAt(pos) {
+                const r = positionToRectangle(pos);
+                const h = root.lineHeight;
+                const line = Math.round((r.y + r.height / 2 - topPadding - h / 2) / h);
+                return Qt.rect(r.x, topPadding + line * h, r.width, h);
+            }
+
+            // Where the baseline is in a cell: Qt puts a fixed-height line's
+            // baseline at 4/5.
+            readonly property real textBaseline: root.lineHeight * 0.8
+
+            // The part of the cell at pos that the font's characters take up.
+            // The cursors and highlights use it rather than Qt's rectangles,
+            // which on a line with an emoji are as tall as the emoji.
+            function bandAt(pos) {
+                const c = cellAt(pos);
+                return Qt.rect(c.x, c.y + textBaseline - metrics.ascent, c.width, metrics.height);
+            }
+
+            // The selection in the visible lines, as one { start, end, eol }
+            // span per line, where eol means it includes the line break.
+            function selectionSpans() {
+                const s = selectionStart, e = selectionEnd;
+                if (s === e)
+                    return [];
+                const t = text, f = scrollView.contentItem;
+                const top = Math.floor((f.contentY - topPadding) / root.lineHeight);
+                const bottom = Math.ceil((f.contentY + f.height - topPadding) / root.lineHeight);
+                const to = Math.min(e, vim.lineEnd(t, vim.lineToPos(t, Math.max(bottom, 0) + 1)));
+                const spans = [];
+                for (let p = Math.max(s, vim.lineToPos(t, Math.max(top, 0) + 1)); p <= to;) {
+                    const le = vim.lineEnd(t, p);
+                    if (p === e)
+                        break;
+                    spans.push({ start: p, end: Math.min(le, e), eol: le < e });
+                    p = le + 1;
+                }
+                return spans;
+            }
+
             font.family: root.isMac ? "Menlo" : "Consolas"
             font.pointSize: root.fontSize
             textFormat: TextEdit.PlainText
             wrapMode: TextEdit.NoWrap
             selectByMouse: true
+            // The selection is drawn below (see `selection`), not by Qt.
+            selectionColor: "transparent"
+            selectedTextColor: color
             readOnly: true // vim starts in normal mode
             focus: true
             onTextChanged: {
@@ -114,15 +180,22 @@ ApplicationWindow {
             onSelectedTextChanged: vim.syncFromEditor()
             Keys.onPressed: event => event.accepted = vim.handleKey(event)
 
-            // Insert mode: a blinking bar.
-            cursorDelegate: Rectangle {
+            // Insert mode: a blinking bar. The editor puts the delegate at its
+            // cursor rectangle; the bar itself fills the text band.
+            cursorDelegate: Item {
                 id: bar
 
                 property bool blinkOn: true
 
                 width: 2
-                color: editor.color
                 visible: vim.mode === "insert" && editor.activeFocus && blinkOn
+
+                Rectangle {
+                    y: editor.bandAt(editor.cursorPosition).y - bar.y
+                    width: parent.width
+                    height: metrics.height
+                    color: editor.color
+                }
 
                 Timer {
                     interval: 530
@@ -136,6 +209,49 @@ ApplicationWindow {
 
                     function onCursorPositionChanged() {
                         bar.blinkOn = true;
+                    }
+                }
+            }
+
+            // The selection, drawn under the text (a negative z puts a child
+            // below its parent's content) with the same height on every line.
+            Item {
+                id: selection
+
+                property var spans: []
+                readonly property var inputs: [editor.selectionStart, editor.selectionEnd, editor.revision,
+                    scrollView.contentItem.contentY, scrollView.contentItem.height,
+                    editor.contentWidth, editor.contentHeight]
+
+                function refresh() {
+                    spans = []; // recompute every rectangle, as for `highlights`
+                    spans = editor.selectionSpans();
+                }
+
+                z: -0.5
+                onInputsChanged: Qt.callLater(refresh)
+
+                TextMetrics {
+                    id: spaceMetrics
+
+                    font: editor.font
+                    text: " "
+                }
+
+                Repeater {
+                    model: selection.spans
+
+                    Rectangle {
+                        required property var modelData
+                        readonly property rect startRect: editor.bandAt(modelData.start)
+                        readonly property rect endRect: editor.bandAt(modelData.end)
+
+                        x: startRect.x
+                        y: startRect.y
+                        // A selected line break shows as a space, as in Qt.
+                        width: endRect.x - startRect.x + (modelData.eol ? spaceMetrics.advanceWidth : 0)
+                        height: startRect.height
+                        color: editor.palette.highlight
                     }
                 }
             }
@@ -166,8 +282,8 @@ ApplicationWindow {
 
                     Rectangle {
                         required property var modelData
-                        readonly property rect startRect: editor.positionToRectangle(modelData.start)
-                        readonly property rect endRect: editor.positionToRectangle(modelData.end)
+                        readonly property rect startRect: editor.bandAt(modelData.start)
+                        readonly property rect endRect: editor.bandAt(modelData.end)
 
                         x: startRect.x
                         y: startRect.y
@@ -177,6 +293,7 @@ ApplicationWindow {
 
                         // Redraw the matched text on top, dark on the highlight.
                         Text {
+                            y: metrics.ascent - baselineOffset
                             text: editor.getText(modelData.start, modelData.end)
                             font: editor.font
                             color: "black"
@@ -200,8 +317,9 @@ ApplicationWindow {
                 // updated yet, and asking for a position then warns.
                 function refresh() {
                     const pos = Math.min(vim.cursor, editor.length);
-                    cell = editor.positionToRectangle(pos);
-                    const c = pos < editor.length ? editor.getText(pos, pos + 1) : "";
+                    cell = editor.bandAt(pos);
+                    const t = editor.text;
+                    const c = t.slice(pos, vim.charEnd(t, pos)); // e.g. a whole emoji
                     character = c === "\t" || c === "\n" || c === "\u2029" ? "" : c;
                 }
 
@@ -252,6 +370,7 @@ ApplicationWindow {
                 opacity: editor.activeFocus ? 1 : 0.4
 
                 Text {
+                    y: metrics.ascent - baselineOffset
                     visible: !parent.underline
                     text: parent.character
                     font: editor.font
@@ -393,6 +512,15 @@ ApplicationWindow {
                 }
             }
             Platform.Menu {
+                title: qsTr("Edit")
+
+                Platform.MenuItem {
+                    text: qsTr("Hide or Reveal Text")
+                    shortcut: "Ctrl+J" // Qt maps Ctrl to Cmd
+                    onTriggered: root.toggleHidden()
+                }
+            }
+            Platform.Menu {
                 title: qsTr("View")
 
                 Platform.MenuItem {
@@ -452,6 +580,15 @@ ApplicationWindow {
                 }
             }
             Menu {
+                title: qsTr("&Edit")
+
+                Action {
+                    text: qsTr("&Hide or Reveal Text")
+                    shortcut: "Ctrl+J"
+                    onTriggered: root.toggleHidden()
+                }
+            }
+            Menu {
                 title: qsTr("&View")
 
                 Action {
@@ -482,6 +619,7 @@ ApplicationWindow {
         // The editor sits in a ScrollView, which is its own focus scope, so
         // `focus: true` alone doesn't give it the keyboard.
         editor.forceActiveFocus();
+        fixLineHeight();
 
         const startup = doc.startupFile();
         if (startup)

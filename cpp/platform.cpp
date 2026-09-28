@@ -1,12 +1,19 @@
 #include "platform.h"
 
 #include <QtCore/QCoreApplication>
+#include <QtCore/QMimeData>
 #include <QtCore/QTranslator>
 #include <QtGui/QClipboard>
 #include <QtGui/QFileOpenEvent>
 #include <QtGui/QGuiApplication>
+#include <QtGui/QTextBlockFormat>
+#include <QtGui/QTextCursor>
+#include <QtGui/QTextDocument>
+#include <QtQuick/QQuickTextDocument>
 
 namespace {
+
+const QString dataFormat = QStringLiteral("application/x-vimedit-data");
 
 class FileOpenFilter : public QObject
 {
@@ -76,8 +83,34 @@ clipboardText()
   return QGuiApplication::clipboard()->text();
 }
 
-void
-setClipboardText(const QString& text)
+QString
+clipboardData()
 {
-  QGuiApplication::clipboard()->setText(text);
+  const auto* data = QGuiApplication::clipboard()->mimeData();
+  if (data && data->hasFormat(dataFormat))
+    return QString::fromUtf8(data->data(dataFormat));
+  return {};
+}
+
+void
+setClipboardText(const QString& text, const QString& data)
+{
+  auto* mimeData = new QMimeData;
+  mimeData->setText(text);
+  if (!data.isEmpty())
+    mimeData->setData(dataFormat, data.toUtf8());
+  QGuiApplication::clipboard()->setMimeData(mimeData);
+}
+
+void
+setLineHeight(QObject* textDocument, double height)
+{
+  auto* quickDocument = qobject_cast<QQuickTextDocument*>(textDocument);
+  if (!quickDocument)
+    return;
+  QTextCursor cursor(quickDocument->textDocument());
+  cursor.select(QTextCursor::Document);
+  QTextBlockFormat format;
+  format.setLineHeight(height, QTextBlockFormat::FixedHeight);
+  cursor.mergeBlockFormat(format);
 }

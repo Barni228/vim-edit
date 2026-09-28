@@ -45,7 +45,14 @@ pub mod qobject {
         fn clipboard_text(self: &Document) -> QString;
 
         #[qinvokable]
-        fn set_clipboard_text(self: &Document, text: &QString);
+        fn clipboard_data(self: &Document) -> QString;
+
+        #[qinvokable]
+        fn set_clipboard_text(self: &Document, text: &QString, data: &QString);
+
+        /// Gives every line of a TextEdit's `textDocument` the same height.
+        #[qinvokable]
+        unsafe fn set_line_height(self: &Document, text_document: *mut QObject, height: f64);
     }
 
     impl cxx_qt::Initialize for Document {}
@@ -98,7 +105,18 @@ impl qobject::Document {
         platform::ffi::clipboard_text()
     }
 
-    fn set_clipboard_text(&self, text: &QString) {
-        platform::ffi::set_clipboard_text(text);
+    fn clipboard_data(&self) -> QString {
+        platform::ffi::clipboard_data()
+    }
+
+    fn set_clipboard_text(&self, text: &QString, data: &QString) {
+        platform::ffi::set_clipboard_text(text, data);
+    }
+
+    /// # Safety
+    ///
+    /// `text_document` must be null or point to a live QObject.
+    unsafe fn set_line_height(&self, text_document: *mut qobject::QObject, height: f64) {
+        unsafe { platform::ffi::set_line_height(text_document.cast(), height) };
     }
 }

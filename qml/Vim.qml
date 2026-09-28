@@ -10,8 +10,9 @@ QtObject {
 
     required property Item editor
     property Flickable flickable: null
-    // Object with clipboardText() and setClipboardText(text): backs the "+
-    // and "* registers. No other register touches the system clipboard.
+    // Object with clipboardText(), clipboardData() and setClipboardText(text,
+    // data): backs the "+ and "* registers. No other register touches the
+    // system clipboard. data is for VimEdit only (the hidden texts).
     property var clipboard: null
     property real lineHeight: 16
     readonly property int pageLines: flickable ? Math.max(2, Math.floor(flickable.height / lineHeight)) : 20
@@ -100,6 +101,7 @@ QtObject {
         undoStack = [];
         redoStack = [];
         change = null;
+        hidden = [];
         insertSession = null;
         setMode("normal");
         setCursor(0);
@@ -127,7 +129,29 @@ QtObject {
                 beginChange();
             return true;
         }
-        if (mode !== "insert") {
+        if (mode === "insert") {
+            // Also through the "+ register, so hidden text is revealed for
+            // other apps and stays hidden when pasted here.
+            const s = editor.selectionStart, e = editor.selectionEnd;
+            if (event.matches(StandardKey.Copy) || event.matches(StandardKey.Cut)) {
+                if (e > s) {
+                    setRegister("+", editor.text.slice(s, e), false, true, hiddenIn(hidden, s, e));
+                    if (event.matches(StandardKey.Cut)) {
+                        replaceRange(s, e, "");
+                        setCursor(s);
+                    }
+                }
+                return true;
+            }
+            if (event.matches(StandardKey.Paste)) {
+                const r = getRegister("+");
+                if (r) {
+                    replaceRange(s, e, r.text, r.hidden);
+                    setCursor(s + r.text.length);
+                }
+                return true;
+            }
+        } else {
             if (event.matches(StandardKey.Copy)) {
                 if (isVisual)
                     execute({ reg: "+", count: 0, action: "y" });
@@ -154,7 +178,7 @@ QtObject {
         }
         const tok = tokenFor(event);
         if (mode === "insert")
-            return insertKey(tok);
+            return insertKey(tok, event);
         if (tok === null)
             return true;
         if (mode === "replace") {
@@ -183,23 +207,23 @@ QtObject {
         keys = [];
         pendingKeys = "";
         awaitingReplaceChar = false;
+        const t = editor.text;
         const s = editor.selectionStart, e = editor.selectionEnd;
         if (s !== e) {
             mode = "visual";
             if (p === e) {
                 anchor = s;
-                cursor = e - 1;
+                cursor = charStart(t, e - 1);
             } else {
-                anchor = e - 1;
+                anchor = charStart(t, e - 1);
                 cursor = s;
             }
             return;
         }
         if (isVisual)
             mode = "normal";
-        const t = editor.text;
         const c = clampNormal(t, p);
-        wantCol = c - lineStart(t, c);
+        wantCol = column(t, c);
         if (c !== p)
             setCursor(c);
         else
@@ -221,7 +245,7 @@ QtObject {
         let line = 1;
         for (let i = t.indexOf("\n"); i >= 0 && i < cursor; i = t.indexOf("\n", i + 1))
             line++;
-        return line + ":" + (cursor - lineStart(t, cursor) + 1);
+        return line + ":" + (column(t, cursor) + 1);
     }
 
     function showError(text) {
@@ -277,7 +301,7 @@ QtObject {
         return tok.length > 2 && tok[0] === "<" && tok[tok.length - 1] === ">";
     }
 
-    function insertKey(tok) {
+    function insertKey(tok, event) {
         if (tok === "<Esc>") {
             leaveInsert();
             return true;
@@ -289,6 +313,12 @@ QtObject {
             breakInsert();
         else if (s && !s.broken && (!isSpecial(tok) || ["<CR>", "<Tab>", "<BS>", "<Del>"].includes(tok)))
             s.keys.push(tok);
+        // The editor's backspace deletes one code point, which would leave
+        // most of an emoji (or of a hidden-text 💩) behind.
+        if (tok === "<BS>" && event.modifiers === Qt.NoModifier && editor.selectionStart === editor.selectionEnd) {
+            typeKey(tok);
+            return true;
+        }
         return false;
     }
 
@@ -583,7 +613,7 @@ QtObject {
         else
             p = clampNormal(t, p);
         if (!r.keepCol)
-            wantCol = r.eol ? Infinity : p - lineStart(t, p);
+            wantCol = r.eol ? Infinity : column(t, p);
         setCursor(p);
     }
 
@@ -611,7 +641,7 @@ QtObject {
                 const big = cmd.motion.name === "W";
                 let q = cursor;
                 for (let i = 0; i < count; i++)
-                    if (i > 0 || charClass(t[q + 1], big) === charClass(t[q], big))
+                    if (i > 0 || charClass(t[charEnd(t, q)], big) === charClass(t[q], big))
                         q = wordEnd(t, q, big);
                 r = { pos: q, type: "inclusive" };
             } else {
@@ -624,7 +654,7 @@ QtObject {
             if (r.type === "linewise")
                 range = { start: lineStart(t, a), end: Math.min(lineEnd(t, b) + 1, n), linewise: true };
             else
-                range = { start: a, end: Math.min(r.type === "inclusive" ? b + 1 : b, n), linewise: false };
+                range = { start: a, end: r.type === "inclusive" ? charEnd(t, b) : Math.min(b, n), linewise: false };
         }
         applyOperator(cmd.op, range, cmd.reg, count,
             range.linewise ? Math.min(cursor, target) : range.start);
@@ -675,7 +705,7 @@ QtObject {
             startInsert(count, p, null);
             break;
         case "a":
-            startInsert(count, p < lineEnd(t, p) ? p + 1 : p, null);
+            startInsert(count, p < lineEnd(t, p) ? charEnd(t, p) : p, null);
             break;
         case "I":
             startInsert(count, firstNonBlank(t, p), null);
@@ -712,7 +742,7 @@ QtObject {
             executeOperator({ op: "d", reg: cmd.reg, count: cmd.count, motion: { name: "h" } });
             break;
         case "s":
-            applyOperator("c", { start: p, end: Math.min(p + count, lineEnd(t, p)), linewise: false }, cmd.reg);
+            applyOperator("c", { start: p, end: advance(t, p, count, lineEnd(t, p)), linewise: false }, cmd.reg);
             break;
         case "S":
             executeOperator({ op: "c", reg: cmd.reg, count: cmd.count, linewise: true });
@@ -744,24 +774,30 @@ QtObject {
             repeatDot(cmd.count);
             break;
         case "~": {
-            const e = Math.min(p + count, lineEnd(t, p));
+            const e = advance(t, p, count, lineEnd(t, p));
             if (e > p) {
-                replaceRange(p, e, toggleCase(t.slice(p, e)));
+                const text = toggleCase(t.slice(p, e));
+                replaceRange(p, e, text, carriedHidden(p, e, text));
                 setCursor(clampNormal(editor.text, e));
             }
             break;
         }
-        case "r":
-            if (p + count > lineEnd(t, p))
+        case "r": {
+            const le = lineEnd(t, p);
+            let e = p, k = 0;
+            for (; k < count && e < le; k++)
+                e = charEnd(t, e);
+            if (k < count)
                 break;
             if (cmd.ch === "\n") {
-                replaceRange(p, p + count, "\n");
+                replaceRange(p, e, "\n");
                 setCursor(p + 1);
             } else {
-                replaceRange(p, p + count, cmd.ch.repeat(count));
-                setCursor(p + count - 1);
+                replaceRange(p, e, cmd.ch.repeat(count));
+                setCursor(p + cmd.ch.length * (count - 1));
             }
             break;
+        }
         case "R":
             setMode("replace");
             setCursor(p);
@@ -809,7 +845,7 @@ QtObject {
             const r = textObject(t, cursor, cmd.textObj, count);
             if (r && r.end > r.start) {
                 anchor = r.start;
-                setCursor(r.end - 1);
+                setCursor(charStart(t, r.end - 1));
             }
             return;
         }
@@ -839,7 +875,7 @@ QtObject {
 
         const lo = Math.min(anchor, cursor), hi = Math.max(anchor, cursor);
         const lineRange = { start: lineStart(t, lo), end: Math.min(lineEnd(t, hi) + 1, n), linewise: true };
-        const range = mode === "visualLine" ? lineRange : { start: lo, end: Math.min(hi + 1, n), linewise: false };
+        const range = mode === "visualLine" ? lineRange : { start: lo, end: charEnd(t, hi), linewise: false };
         setMode("normal");
         setCursor(clampNormal(t, lo));
         switch (a) {
@@ -884,8 +920,12 @@ QtObject {
             changeCase(range, "U");
             break;
         case "r": {
-            if (cmd.ch !== "\n")
-                replaceRange(range.start, range.end, t.slice(range.start, range.end).replace(/[^\n]/g, () => cmd.ch));
+            if (cmd.ch !== "\n") {
+                let s = "";
+                for (let q = range.start; q < range.end; q = charEnd(t, q))
+                    s += t[q] === "\n" ? "\n" : cmd.ch;
+                replaceRange(range.start, range.end, s);
+            }
             setCursor(clampNormal(editor.text, range.start));
             break;
         }
@@ -898,19 +938,22 @@ QtObject {
             const r = getRegister(cmd.reg);
             if (!r)
                 break;
-            let text = r.text;
-            if (r.linewise && !range.linewise)
+            let text = r.text, entries = r.hidden;
+            if (r.linewise && !range.linewise) {
                 text = "\n" + text;
-            else if (!r.linewise && range.linewise)
+                entries = shifted(entries, 1);
+            } else if (!r.linewise && range.linewise) {
                 text = text + "\n";
+            }
             const removed = t.slice(range.start, range.end);
-            replaceRange(range.start, range.end, text);
+            const removedHidden = hiddenIn(hidden, range.start, range.end);
+            replaceRange(range.start, range.end, text, entries);
             if (a === "p")
-                setRegister(null, removed, range.linewise, false);
+                setRegister(null, removed, range.linewise, false, removedHidden);
             const nt = editor.text;
             setCursor(clampNormal(nt, r.linewise
                 ? firstNonBlank(nt, range.start + (range.linewise ? 0 : 1))
-                : range.start + text.length - 1));
+                : charStart(nt, range.start + text.length - 1)));
             break;
         }
         }
@@ -956,11 +999,11 @@ QtObject {
         insertSession = null;
         replaceStack = [];
         const t = editor.text;
-        const p = cursor > lineStart(t, cursor) ? cursor - 1 : cursor;
+        const p = cursor > lineStart(t, cursor) ? charStart(t, cursor - 1) : cursor;
         setMode("normal");
         commitChange();
         setCursor(clampNormal(t, p));
-        wantCol = cursor - lineStart(t, cursor);
+        wantCol = column(t, cursor);
     }
 
     // Types a recorded insert-mode key (used by "." and counts).
@@ -972,12 +1015,13 @@ QtObject {
         const p = cursor;
         if (tok === "<BS>") {
             if (p > 0) {
-                replaceRange(p - 1, p, "");
-                setCursor(p - 1);
+                const q = charStart(editor.text, p - 1);
+                replaceRange(q, p, "");
+                setCursor(q);
             }
         } else if (tok === "<Del>") {
             if (p < editor.length)
-                replaceRange(p, p + 1, "");
+                replaceRange(p, charEnd(editor.text, p), "");
         } else {
             const s = tok === "<CR>" ? "\n" : tok === "<Tab>" ? "\t" : tok;
             replaceRange(p, p, s);
@@ -988,27 +1032,29 @@ QtObject {
     function replaceKey(tok) {
         const p = cursor;
         if (tok === "<BS>") {
+            const q = charStart(editor.text, p - 1);
             if (replaceStack.length) {
                 const orig = replaceStack.pop();
-                replaceRange(p - 1, p, orig === null ? "" : orig);
-                setCursor(p - 1);
+                replaceRange(q, p, orig ? orig.text : "", orig ? orig.hidden : []);
+                setCursor(q);
             } else if (p > lineStart(editor.text, p)) {
-                setCursor(p - 1);
+                setCursor(q);
             }
             return;
         }
         const s = tok === "<CR>" ? "\n" : tok === "<Tab>" ? "\t" : tok;
-        for (let i = 0; i < s.length; i++) {
-            const q = cursor, ch = s[i], t = editor.text;
+        for (const ch of s) {
+            const q = cursor, t = editor.text;
             // A line break is inserted without replacing anything.
             if (ch !== "\n" && q < t.length && t[q] !== "\n") {
-                replaceStack.push(t[q]);
-                replaceRange(q, q + 1, ch);
+                const e = charEnd(t, q);
+                replaceStack.push({ text: t.slice(q, e), hidden: hiddenIn(hidden, q, e) });
+                replaceRange(q, e, ch);
             } else {
                 replaceStack.push(null);
                 replaceRange(q, q, ch);
             }
-            setCursor(q + 1);
+            setCursor(q + ch.length);
         }
     }
 
@@ -1032,13 +1078,20 @@ QtObject {
 
     // ---- Editing primitives ----------------------------------------------
 
-    function replaceRange(start, end, text) {
+    // `entries` are the hidden-text entries for `text`, if it has any.
+    function replaceRange(start, end, text, entries) {
         syncing = true;
+        editing = true;
         if (end > start)
             editor.remove(start, end);
         if (text.length)
             editor.insert(start, text);
+        editing = false;
         syncing = false;
+        if (hidden.length || entries && entries.length) {
+            shiftHidden(start, end, text.length, entries || []);
+            trackedText = editor.text;
+        }
     }
 
     function setMode(m) {
@@ -1076,9 +1129,9 @@ QtObject {
             else
                 editor.select(e, s);
         } else if (cursor >= anchor) {
-            editor.select(anchor, Math.min(cursor + 1, n));
+            editor.select(anchor, charEnd(t, cursor));
         } else {
-            editor.select(Math.min(anchor + 1, n), cursor);
+            editor.select(charEnd(t, anchor), cursor);
         }
     }
 
@@ -1088,27 +1141,21 @@ QtObject {
 
     function beginChange() {
         if (!change)
-            change = { before: editor.text, cursor: cursor };
+            change = { before: editor.text, hidden: hidden, cursor: cursor };
     }
 
     function commitChange() {
         if (!change)
             return;
         const before = change.before, after = editor.text;
-        const c = change.cursor;
+        const c = change.cursor, bh = change.hidden;
         change = null;
-        if (before === after)
+        const d = diff(before, after, bh, hidden);
+        if (!d)
             return;
-        let s = 0;
-        const max = Math.min(before.length, after.length);
-        while (s < max && before[s] === after[s])
-            s++;
-        let e1 = before.length, e2 = after.length;
-        while (e1 > s && e2 > s && before[e1 - 1] === after[e2 - 1]) {
-            e1--;
-            e2--;
-        }
-        undoStack.push({ start: s, removed: before.slice(s, e1), inserted: after.slice(s, e2), cursor: c });
+        const s = d.start, e1 = d.end1, e2 = d.end2;
+        undoStack.push({ start: s, removed: before.slice(s, e1), inserted: after.slice(s, e2),
+            removedHidden: hiddenIn(bh, s, e1), insertedHidden: hiddenIn(hidden, s, e2), cursor: c });
         redoStack = [];
     }
 
@@ -1117,7 +1164,7 @@ QtObject {
         let last = null;
         for (let i = 0; i < count && undoStack.length; i++) {
             last = undoStack.pop();
-            replaceRange(last.start, last.start + last.inserted.length, last.removed);
+            replaceRange(last.start, last.start + last.inserted.length, last.removed, last.removedHidden);
             redoStack.push(last);
         }
         if (!last) {
@@ -1133,7 +1180,7 @@ QtObject {
         let last = null;
         for (let i = 0; i < count && redoStack.length; i++) {
             last = redoStack.pop();
-            replaceRange(last.start, last.start + last.removed.length, last.inserted);
+            replaceRange(last.start, last.start + last.removed.length, last.inserted, last.insertedHidden);
             undoStack.push(last);
         }
         if (!last) {
@@ -1147,22 +1194,29 @@ QtObject {
 
     // ---- Registers -------------------------------------------------------
 
-    function setRegister(name, text, linewise, isYank) {
+    // `entries` are the hidden-text entries for `text`, if it has any.
+    function setRegister(name, text, linewise, isYank, entries) {
         if (name === "_")
             return;
+        entries = entries || [];
         // The clipboard registers are separate: writing them leaves the
-        // unnamed register (what plain "p" pastes) alone.
+        // unnamed register (what plain "p" pastes) alone. Other apps get the
+        // hidden texts revealed; VimEdit gets the 💩s back.
         if (name === "+" || name === "*") {
             if (clipboard)
-                clipboard.setClipboardText(text);
+                clipboard.setClipboardText(revealAll(text, entries),
+                    entries.length ? JSON.stringify({ text: text, hidden: entries }) : "");
             return;
         }
-        const entry = { text: text, linewise: linewise };
+        const entry = { text: text, linewise: linewise, hidden: entries };
         if (name && /^[A-Z]$/.test(name)) {
             const key = name.toLowerCase();
             const old = registers[key];
-            if (old)
-                entry.text = old.text + (linewise && !old.linewise ? "\n" : "") + text;
+            if (old) {
+                const sep = linewise && !old.linewise ? "\n" : "";
+                entry.text = old.text + sep + text;
+                entry.hidden = old.hidden.concat(shifted(entries, old.text.length + sep.length));
+            }
             entry.linewise = linewise || (old && old.linewise);
             registers[key] = entry;
         } else if (name && name !== "\"") {
@@ -1175,8 +1229,17 @@ QtObject {
 
     function getRegister(name) {
         if (name === "+" || name === "*") {
-            const s = clipboard ? clipboard.clipboardText() : "";
-            return s ? { text: s, linewise: s.endsWith("\n") } : null;
+            if (!clipboard)
+                return null;
+            try {
+                const d = JSON.parse(clipboard.clipboardData() || "null");
+                if (d && typeof d.text === "string" && validHidden(d.text, d.hidden))
+                    return { text: d.text, linewise: d.text.endsWith("\n"), hidden: d.hidden };
+            } catch (e) {
+                // not ours after all: use the text
+            }
+            const s = clipboard.clipboardText();
+            return s ? { text: s, linewise: s.endsWith("\n"), hidden: [] } : null;
         }
         return registers[(name || "\"").toLowerCase()] || null;
     }
@@ -1185,7 +1248,7 @@ QtObject {
         let text = t.slice(range.start, range.end);
         if (range.linewise && !text.endsWith("\n"))
             text += "\n";
-        setRegister(reg, text, range.linewise, true);
+        setRegister(reg, text, range.linewise, true, hiddenIn(hidden, range.start, range.end));
     }
 
     function deleteRange(t, range, reg) {
@@ -1197,7 +1260,7 @@ QtObject {
             if (s > 0)
                 s--;
         }
-        setRegister(reg, text, range.linewise, false);
+        setRegister(reg, text, range.linewise, false, hiddenIn(hidden, range.start, range.end));
         replaceRange(s, range.end, "");
         const nt = editor.text;
         if (range.linewise)
@@ -1212,6 +1275,7 @@ QtObject {
             return;
         const t = editor.text;
         const p = cursor;
+        let entries = repeated(r.hidden, r.text.length, count);
         if (r.linewise) {
             let body = r.text.repeat(count);
             let at;
@@ -1224,17 +1288,216 @@ QtObject {
                 } else {
                     at = t.length;
                     body = "\n" + body.slice(0, -1);
+                    entries = shifted(entries, 1);
                 }
             }
-            replaceRange(at, at, body);
+            replaceRange(at, at, body, entries);
             const nt = editor.text;
             setCursor(clampNormal(nt, firstNonBlank(nt, body[0] === "\n" ? at + 1 : at)));
         } else {
-            const at = after && p < lineEnd(t, p) ? p + 1 : p;
+            const at = after && p < lineEnd(t, p) ? charEnd(t, p) : p;
             const body = r.text.repeat(count);
-            replaceRange(at, at, body);
+            replaceRange(at, at, body, entries);
             setCursor(clampNormal(editor.text, at + Math.max(body.length - 1, 0)));
         }
+    }
+
+    // ---- Hidden text ------------------------------------------------------
+    // Cmd+J turns text into a 💩. The document holds a plain 💩, and the text
+    // is kept beside it in `hidden`: a list of { at, item } sorted by
+    // position, where item is { text, hidden } (hidden text can have 💩s of
+    // its own). Every edit shifts the list: vim's own in replaceRange, the
+    // editor's (typing in insert mode) by diffing the text. Registers, undo
+    // steps and the clipboard carry the entries for the text they hold, so a
+    // 💩 yanks, pastes and undoes like any character. Files get a plain 💩.
+
+    readonly property string poop: "\uD83D\uDCA9"
+    // Replaced, never changed in place, so a copy of the reference is a snapshot.
+    property var hidden: []
+    // The text `hidden` matches, to diff the editor's own edits against.
+    property string trackedText: ""
+    property bool editing: false
+    readonly property Connections editorEdits: Connections {
+        target: vim.editor
+
+        function onTextChanged() {
+            vim.trackEdit();
+        }
+    }
+
+    // The entries of `list` in [start, end), relative to start.
+    function hiddenIn(list, start, end) {
+        return list.filter(h => h.at >= start && h.at < end).map(h => ({ at: h.at - start, item: h.item }));
+    }
+
+    function shifted(list, by) {
+        return list.map(h => ({ at: h.at + by, item: h.item }));
+    }
+
+    // `list` for text repeated `count` times.
+    function repeated(list, length, count) {
+        let r = [];
+        for (let i = 0; i < count; i++)
+            r = r.concat(shifted(list, i * length));
+        return r;
+    }
+
+    // Updates `hidden` for text [start, end) replaced by `length` characters
+    // with the entries `entries`. A 💩 the edit touches loses its text.
+    function shiftHidden(start, end, length, entries) {
+        const d = length - (end - start);
+        hidden = hidden.filter(h => h.at + poop.length <= start)
+            .concat(shifted(entries, start), shifted(hidden.filter(h => h.at >= end), d));
+    }
+
+    // Edits made by the editor itself, rather than through replaceRange.
+    function trackEdit() {
+        if (editing || !hidden.length)
+            return;
+        const before = trackedText, after = editor.text;
+        trackedText = after;
+        const d = diff(before, after, [], []);
+        if (d)
+            shiftHidden(d.start, d.end1, d.end2 - d.start, []);
+    }
+
+    // The span that differs between two texts with their entries: `before`
+    // [start, end1) became `after` [start, end2). Null if nothing differs.
+    function diff(before, after, beforeHidden, afterHidden) {
+        const bh = beforeHidden, ah = afterHidden;
+        let s = 0;
+        const max = Math.min(before.length, after.length);
+        while (s < max && before[s] === after[s])
+            s++;
+        let e1 = before.length, e2 = after.length;
+        while (e1 > s && e2 > s && before[e1 - 1] === after[e2 - 1]) {
+            e1--;
+            e2--;
+        }
+        // A 💩 on both sides is only unchanged if its text is too.
+        for (let i = 0; ; i++) {
+            const b = bh[i], a = ah[i];
+            const bIn = b && b.at < s, aIn = a && a.at < s;
+            if (!bIn && !aIn)
+                break;
+            if (bIn && aIn && b.at === a.at && b.item === a.item)
+                continue;
+            s = Math.min(bIn ? b.at : s, aIn ? a.at : s);
+            break;
+        }
+        for (let i = 1; ; i++) {
+            const b = bh[bh.length - i], a = ah[ah.length - i];
+            const bIn = b && b.at >= e1, aIn = a && a.at >= e2;
+            if (!bIn && !aIn)
+                break;
+            if (bIn && aIn && before.length - b.at === after.length - a.at && b.item === a.item)
+                continue;
+            const cut = Math.max(bIn ? b.at + poop.length - e1 : 0, aIn ? a.at + poop.length - e2 : 0);
+            e1 += cut;
+            e2 += cut;
+            break;
+        }
+        if (s === e1 && s === e2)
+            return null;
+        return { start: s, end1: e1, end2: e2 };
+    }
+
+    // Entries for `text` replacing [start, end) with the same 💩s in the
+    // same order (a case change or indenting), which keep their texts.
+    function carriedHidden(start, end, text) {
+        const old = hiddenIn(hidden, start, end);
+        const t = editor.text.slice(start, end);
+        const r = [];
+        let k = 0;
+        for (let i = t.indexOf(poop), j = text.indexOf(poop); i >= 0 && j >= 0;
+                i = t.indexOf(poop, i + poop.length), j = text.indexOf(poop, j + poop.length)) {
+            while (k < old.length && old[k].at < i)
+                k++;
+            if (k < old.length && old[k].at === i)
+                r.push({ at: j, item: old[k].item });
+        }
+        return r;
+    }
+
+    // The hidden-text entry of the 💩 at p, or null.
+    function hiddenAt(p) {
+        return hidden.find(h => h.at === p) || null;
+    }
+
+    // text with every hidden text (and any hidden inside that) revealed.
+    function revealAll(text, list) {
+        let r = "", i = 0;
+        for (const h of list) {
+            r += text.slice(i, h.at) + revealAll(h.item.text, h.item.hidden);
+            i = h.at + poop.length;
+        }
+        return r + text.slice(i);
+    }
+
+    // Entries read from the clipboard: checked, since any app could have
+    // put them there.
+    function validHidden(text, list) {
+        if (!Array.isArray(list))
+            return false;
+        let last = -poop.length;
+        for (const h of list) {
+            if (!h || !Number.isInteger(h.at) || h.at < last + poop.length || !text.startsWith(poop, h.at)
+                    || !h.item || typeof h.item.text !== "string" || !validHidden(h.item.text, h.item.hidden))
+                return false;
+            last = h.at;
+        }
+        return true;
+    }
+
+    // Hides the selected text in a 💩, or reveals the text in the 💩 under
+    // the cursor (or selected) and selects it, so Cmd+J again hides it again.
+    function toggleHidden() {
+        if (commandLine !== "" || mode === "replace")
+            return;
+        const t = editor.text;
+        let range = null;
+        if (isVisual) {
+            const lo = Math.min(anchor, cursor), hi = Math.max(anchor, cursor);
+            range = mode === "visualLine" ? { start: lineStart(t, lo), end: lineEnd(t, hi) }
+                : { start: lo, end: charEnd(t, hi) };
+            lastVisual = { mode: mode, anchor: anchor, cursor: cursor };
+        } else if (mode === "insert" && editor.selectionStart !== editor.selectionEnd) {
+            range = { start: editor.selectionStart, end: editor.selectionEnd };
+        }
+        let h;
+        if (range)
+            h = range.end === range.start + poop.length ? hiddenAt(range.start) : null;
+        else
+            h = hiddenAt(cursor) || (mode === "insert" ? hiddenAt(cursor - poop.length) : null);
+        if (!h && (!range || range.end <= range.start))
+            return;
+        if (mode === "insert")
+            breakInsert();
+        externalEdit(() => {
+            if (h) {
+                const text = h.item.text, start = h.at, e = start + text.length;
+                replaceRange(start, start + poop.length, text, h.item.hidden);
+                if (mode === "insert") {
+                    setCursor(e);
+                    syncing = true;
+                    editor.select(start, e);
+                    syncing = false;
+                } else {
+                    anchor = start;
+                    setMode("visual");
+                    setCursor(charStart(editor.text, e - 1));
+                }
+            } else {
+                const item = { text: t.slice(range.start, range.end), hidden: hiddenIn(hidden, range.start, range.end) };
+                replaceRange(range.start, range.end, poop, [{ at: 0, item: item }]);
+                if (mode === "insert") {
+                    setCursor(charEnd(editor.text, range.start));
+                } else {
+                    setMode("normal");
+                    setCursor(range.start);
+                }
+            }
+        });
     }
 
     // ---- Other edits -------------------------------------------------------
@@ -1276,15 +1539,16 @@ QtObject {
             }
             return line.slice(k);
         });
-        replaceRange(s, e, lines.join("\n"));
+        const text = lines.join("\n");
+        replaceRange(s, e, text, carriedHidden(s, e, text));
         setCursor(clampNormal(editor.text, firstNonBlank(editor.text, s)));
     }
 
     function changeCase(range, how) {
         const t = editor.text;
         const s = t.slice(range.start, range.end);
-        replaceRange(range.start, range.end,
-            how === "u" ? s.toLowerCase() : how === "U" ? s.toUpperCase() : toggleCase(s));
+        const text = how === "u" ? s.toLowerCase() : how === "U" ? s.toUpperCase() : toggleCase(s);
+        replaceRange(range.start, range.end, text, carriedHidden(range.start, range.end, text));
         setCursor(clampNormal(editor.text, range.start));
     }
 
@@ -1348,13 +1612,13 @@ QtObject {
         case "<Left>":
         case "<BS>": {
             const ls = lineStart(t, p);
-            return p > ls ? { pos: Math.max(ls, p - count), type: "exclusive" } : null;
+            return p > ls ? { pos: retreat(t, p, count, ls), type: "exclusive" } : null;
         }
         case "l":
         case "<Right>":
         case " ": {
             const le = lineEnd(t, p);
-            return p < le ? { pos: Math.min(le, p + count), type: "exclusive" } : null;
+            return p < le ? { pos: advance(t, p, count, le), type: "exclusive" } : null;
         }
         case "j":
         case "<Down>":
@@ -1389,8 +1653,7 @@ QtObject {
             return { pos: lineEnd(t, q), type: "exclusive", eol: true };
         }
         case "|": {
-            const ls = lineStart(t, p), le = lineEnd(t, p);
-            return { pos: Math.min(ls + count - 1, Math.max(le - 1, ls)), type: "exclusive" };
+            return { pos: atColumn(t, lineStart(t, p), count - 1), type: "exclusive" };
         }
         case "gg":
         case "G": {
@@ -1532,8 +1795,7 @@ QtObject {
         }
         if (moved === 0)
             return null;
-        const le = lineEnd(t, ls);
-        return { pos: ls + Math.min(wantCol, Math.max(le - ls - 1, 0)), type: "linewise", keepCol: true };
+        return { pos: atColumn(t, ls, wantCol), type: "linewise", keepCol: true };
     }
 
     // 0 for blanks, 1 for punctuation, 2 for word characters (or any
@@ -1594,14 +1856,14 @@ QtObject {
 
     function wordEnd(t, p, big) {
         const n = t.length;
-        let q = p + 1;
+        let q = charEnd(t, p);
         while (q < n && charClass(t[q], big) === 0)
             q++;
         if (q >= n)
             return p;
         const c = charClass(t[q], big);
-        while (q + 1 < n && charClass(t[q + 1], big) === c)
-            q++;
+        for (let e = charEnd(t, q); e < n && charClass(t[e], big) === c; e = charEnd(t, q))
+            q = e;
         return q;
     }
 
@@ -1617,7 +1879,7 @@ QtObject {
                 return q;
             q--;
         }
-        return Math.max(q, 0);
+        return charStart(t, Math.max(q, 0));
     }
 
     function findChar(t, p, kind, ch, count, repeat) {
@@ -1632,7 +1894,7 @@ QtObject {
                     return null;
                 q = idx;
             }
-            return { pos: kind === "t" ? q - 1 : q, type: "inclusive" };
+            return { pos: kind === "t" ? charStart(t, q - 1) : q, type: "inclusive" };
         }
         for (let i = 0; i < count; i++) {
             const from = kind === "T" && repeat && i === 0 && t[q - 1] === ch ? q - 2 : q - 1;
@@ -1643,7 +1905,7 @@ QtObject {
                 return null;
             q = idx;
         }
-        return { pos: kind === "T" ? q + 1 : q, type: "exclusive" };
+        return { pos: kind === "T" ? charEnd(t, q) : q, type: "exclusive" };
     }
 
     function matchPair(t, p) {
@@ -2038,7 +2300,81 @@ QtObject {
     function clampNormal(t, p) {
         p = Math.max(0, Math.min(p, t.length));
         const ls = lineStart(t, p), le = lineEnd(t, p);
-        return le > ls && p >= le ? le - 1 : p;
+        return charStart(t, le > ls && p >= le ? le - 1 : p);
+    }
+
+    // A character is one code point plus the code points that attach to it:
+    // combining marks, variation selectors, emoji modifiers and tags, and
+    // whatever follows a zero-width joiner. Like Qt, vim moves over one as a
+    // whole, so the cursor never lands inside an emoji (or a hidden-text 💩).
+    function attaches(t, i) {
+        const c = t.codePointAt(i);
+        return c >= 0x300 && c <= 0x36F || c >= 0x1AB0 && c <= 0x1AFF || c >= 0x1DC0 && c <= 0x1DFF
+            || c >= 0x20D0 && c <= 0x20FF || c >= 0xFE00 && c <= 0xFE0F || c >= 0xFE20 && c <= 0xFE2F
+            || c === 0x200D || c >= 0x1F3FB && c <= 0x1F3FF || c >= 0xE0000 && c <= 0xE0FFF
+            || t.charCodeAt(i - 1) === 0x200D;
+    }
+
+    function isLowSurrogate(t, i) {
+        const c = t.charCodeAt(i), h = t.charCodeAt(i - 1);
+        return c >= 0xDC00 && c <= 0xDFFF && h >= 0xD800 && h <= 0xDBFF;
+    }
+
+    // End of the character at p.
+    function charEnd(t, p) {
+        const n = t.length;
+        if (p >= n)
+            return n;
+        if (t[p] === "\n")
+            return p + 1;
+        let q = p + 1;
+        while (q < n && (isLowSurrogate(t, q) || t[q] !== "\n" && attaches(t, q)))
+            q++;
+        return q;
+    }
+
+    // Start of the character that p is in.
+    function charStart(t, p) {
+        if (p >= t.length)
+            return Math.max(p, 0);
+        let q = p;
+        while (q > 0 && t[q - 1] !== "\n" && (isLowSurrogate(t, q) || attaches(t, q)))
+            q--;
+        return q;
+    }
+
+    // Steps over up to `count` characters, but not past `limit`.
+    function advance(t, p, count, limit) {
+        for (let i = 0; i < count && p < limit; i++)
+            p = Math.min(charEnd(t, p), limit);
+        return p;
+    }
+
+    function retreat(t, p, count, limit) {
+        for (let i = 0; i < count && p > limit; i++)
+            p = Math.max(charStart(t, p - 1), limit);
+        return p;
+    }
+
+    // Column of p in its line, counted in characters.
+    function column(t, p) {
+        // p can be past the end: the editor may report its cursor before the
+        // text change that moved it.
+        p = Math.min(p, t.length);
+        let col = 0;
+        for (let q = lineStart(t, p); q < p; q = charEnd(t, q))
+            col++;
+        return col;
+    }
+
+    // Position of column `col` in the line starting at ls, or of the line's
+    // last character when it's shorter.
+    function atColumn(t, ls, col) {
+        const le = lineEnd(t, ls);
+        let q = ls;
+        for (let i = 0; i < col && charEnd(t, q) < le; i++)
+            q = charEnd(t, q);
+        return q;
     }
 
     function countLines(t) {

@@ -22,6 +22,15 @@ The editor starts in normal mode. It supports the common vim commands:
 - The command line can be edited with Left/Right, Home/End, Delete, `Ctrl-W` and
   `Ctrl-U`.
 
+## Hidden text
+
+Select some text and press Cmd+J (Ctrl+J on Windows and Linux) to turn it into a 💩.
+The 💩 acts like any other character: you can move over it, select it, delete it,
+yank it and paste it. Copying it to the system clipboard (`"+y` or Cmd+C) gives
+other apps the hidden text, while pasting it back into VimEdit gives the 💩 again.
+Press Cmd+J on a 💩 to reveal its text. Hidden text is never saved: in the file
+it's a plain 💩.
+
 ## Install
 
 Download the installer from the

@@ -20,8 +20,16 @@ pub mod ffi {
         #[cxx_name = "clipboardText"]
         fn clipboard_text() -> QString;
 
-        /// Writes the system clipboard.
+        /// Reads the VimEdit-only data stored with the clipboard text.
+        #[cxx_name = "clipboardData"]
+        fn clipboard_data() -> QString;
+
+        /// Writes the system clipboard, with VimEdit-only `data` if not empty.
         #[cxx_name = "setClipboardText"]
-        fn set_clipboard_text(text: &QString);
+        fn set_clipboard_text(text: &QString, data: &QString);
+
+        /// Gives every line of a QQuickTextDocument the same height.
+        #[cxx_name = "setLineHeight"]
+        unsafe fn set_line_height(text_document: *mut QObject, height: f64);
     }
 }

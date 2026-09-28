@@ -58,6 +58,21 @@ VimEdit: a plain-text editor in Rust + Qt 6 via cxx-qt 0.10, with the UI in QML.
   doesn't open the accent picker on held keys and only vim edits the text. Vim keeps its
   own undo stack (diffs per change), so native undo (Cmd+Z) is routed to it. Only the
   `"+`/`"*` registers use the system clipboard, via `Document.clipboardText()`.
+- **Hidden text** (Cmd+J): the document holds a plain 💩, and `Vim.hidden` keeps
+  the text beside it as `{ at, item }` entries. Vim's edits shift the entries in
+  `replaceRange` (pass the entries of inserted text), editor-made edits (insert
+  mode typing) by diffing against `trackedText`. Registers, undo steps and the
+  `"+` register carry entries; the clipboard gets the revealed text as plain
+  text and the entries as JSON in `application/x-vimedit-data`. Qt's native
+  Backspace deletes one code point, so vim handles Backspace in insert mode, and
+  cursor steps go through `charStart`/`charEnd` (never `±1`) so they don't split
+  an emoji.
+- **Line height**: emoji come from a taller font and would make their line
+  taller, so `fixLineHeight` gives every block a fixed height (a block format,
+  reapplied after setting `editor.text`). Qt's selection and `positionToRectangle`
+  still use the natural (taller) height on emoji lines, so VimEdit draws the
+  selection itself (under the text, `z: -0.5`), and all overlays use
+  `editor.bandAt` (the font's height, snapped to the line grid).
 - Don't make a QML binding depend on something by reading it as a bare statement
   (`editor.revision;`): the app's QML is compiled ahead of time, which can drop it,
   though `qmltestrunner` keeps it. Use the value, e.g. `TextMetrics.advanceWidth`

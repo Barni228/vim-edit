@@ -13,6 +13,13 @@ void installFileOpenFilter(QObject& target);
 void useSettingsMenuTitle();
 
 // System clipboard access for the vim "+ and "* registers. Other registers
-// never touch the clipboard.
+// never touch the clipboard. Along with the text, VimEdit can store data of
+// its own (the hidden texts behind 💩s), which only VimEdit reads.
 QString clipboardText();
-void setClipboardText(const QString& text);
+QString clipboardData();
+void setClipboardText(const QString& text, const QString& data);
+
+// Gives every line of a TextEdit's document (a QQuickTextDocument) the same
+// height, so a line with an emoji (from a taller font) doesn't grow. New
+// lines inherit it, but setting the TextEdit's text resets it.
+void setLineHeight(QObject* textDocument, double height);
