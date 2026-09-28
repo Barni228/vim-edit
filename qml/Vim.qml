@@ -17,7 +17,7 @@ QtObject {
     property real lineHeight: 16
     readonly property int pageLines: flickable ? Math.max(2, Math.floor(flickable.height / lineHeight)) : 20
 
-    // "normal", "insert", "replace", "visual" or "visualLine"
+    // "normal", "insert", "replace", "visual", "visualLine" or "visualBlock"
     property string mode: "normal"
     property int cursor: 0
     property int anchor: 0
@@ -30,14 +30,15 @@ QtObject {
     property string message: ""
     property bool messageIsError: false
 
-    readonly property bool isVisual: mode === "visual" || mode === "visualLine"
+    readonly property bool isVisual: mode === "visual" || mode === "visualLine" || mode === "visualBlock"
     readonly property string cursorShape: mode === "insert" ? "bar"
         : mode === "replace" || awaitingReplaceChar ? "underline" : "block"
     readonly property string modeLabel: [({
             insert: "-- INSERT --",
             replace: "-- REPLACE --",
             visual: "-- VISUAL --",
-            visualLine: "-- VISUAL LINE --"
+            visualLine: "-- VISUAL LINE --",
+            visualBlock: "-- VISUAL BLOCK --"
         })[mode] || "", recording ? "recording @" + recording : ""].filter(s => s).join(" ")
 
     signal writeRequested(bool quit)
@@ -53,9 +54,10 @@ QtObject {
         "<C-d>", "<C-u>", "<C-f>", "<C-b>", "<PageDown>", "<PageUp>"]
     readonly property var normalActions: ["i", "a", "I", "A", "gI", "o", "O", "v", "V", "x", "<Del>", "X",
         "s", "S", "C", "D", "Y", "p", "P", "J", "gJ", "u", "<C-r>", ".", "~", "r", "R", ":", "/", "?",
-        "ZZ", "ZQ", "zz", "zt", "zb", "gv", "gh", "<C-a>", "<C-x>", "q", "@", "<Esc>"]
-    readonly property var visualActions: ["<Esc>", "v", "V", "o", "O", "x", "<Del>", "X", "D", "s", "C",
-        "S", "R", "Y", "~", "u", "U", "r", "J", "gJ", "p", "P", ":", "/", "?", "q"]
+        "ZZ", "ZQ", "zz", "zt", "zb", "gv", "gh", "<C-a>", "<C-x>", "q", "@", "<C-v>", "<Esc>"]
+    readonly property var visualActions: ["<Esc>", "v", "V", "<C-v>", "o", "O", "x", "<Del>", "X", "D", "s",
+        "C", "S", "R", "Y", "~", "u", "U", "r", "J", "gJ", "p", "P", ":", "/", "?", "q", "I", "A"]
+    readonly property var visualModes: ({ "v": "visual", "V": "visualLine", "<C-v>": "visualBlock" })
     // Normal-mode commands that modify the text (and so can be repeated with ".").
     readonly property var changeActions: ["i", "a", "I", "A", "gI", "o", "O", "x", "<Del>", "X", "s", "S",
         "C", "D", "p", "P", "J", "gJ", "~", "r", "R", "<C-a>", "<C-x>"]
@@ -73,6 +75,11 @@ QtObject {
     property var lastVisual: null
     property var dot: null
     property var insertSession: null
+    // An insert started from a visual block: what's typed on the first line
+    // is copied to the other lines as it's typed.
+    property var blockInsert: null
+    // Where the other lines' cursors are during a block insert, for drawing.
+    property var blockCursors: []
     property var replaceStack: []
     property bool syncing: false
     property bool replaying: false
@@ -114,6 +121,8 @@ QtObject {
         change = null;
         hidden = [];
         insertSession = null;
+        blockInsert = null;
+        blockCursors = [];
         setMode("normal");
         setCursor(0);
     }
@@ -154,7 +163,8 @@ QtObject {
                 }
                 return true;
             }
-            if (event.matches(StandardKey.Paste)) {
+            // Ctrl+V pastes too, also on macOS (where Paste is Cmd+V).
+            if (event.matches(StandardKey.Paste) || tokenFor(event) === "<C-v>") {
                 const r = getRegister("+");
                 if (r) {
                     replaceRange(s, e, r.text, r.hidden);
@@ -165,7 +175,9 @@ QtObject {
         } else {
             // On Windows and Linux, Ctrl+A and Ctrl+X are Select All and Cut,
             // except in normal mode, where they add to a number as in vim.
+            // Ctrl+V (Paste there) starts visual block mode.
             const addKey = mode === "normal" && ["<C-a>", "<C-x>"].includes(tokenFor(event));
+            const blockKey = tokenFor(event) === "<C-v>";
             if (event.matches(StandardKey.Copy)) {
                 if (isVisual)
                     execute({ reg: "+", count: 0, action: "y" });
@@ -176,7 +188,7 @@ QtObject {
                     execute({ reg: "+", count: 0, action: "d" });
                 return true;
             }
-            if (event.matches(StandardKey.Paste)) {
+            if (event.matches(StandardKey.Paste) && !blockKey) {
                 if (mode !== "replace")
                     execute({ reg: "+", count: 0, action: "P" });
                 return true;
@@ -229,6 +241,8 @@ QtObject {
         const p = editor.cursorPosition;
         if (mode === "insert" || mode === "replace") {
             cursor = p;
+            if (blockInsert)
+                Qt.callLater(mirrorBlock); // moves the other cursors too
             return;
         }
         keys = [];
@@ -269,10 +283,7 @@ QtObject {
 
     function positionLabel() {
         const t = editor.text;
-        let line = 1;
-        for (let i = t.indexOf("\n"); i >= 0 && i < cursor; i = t.indexOf("\n", i + 1))
-            line++;
-        return line + ":" + (column(t, cursor) + 1);
+        return lineOf(t, cursor) + ":" + (column(t, cursor) + 1);
     }
 
     function showError(text) {
@@ -657,7 +668,7 @@ QtObject {
     function isChange(cmd) {
         if (isVisual)
             return !cmd.motion && !cmd.textObj
-                && !["<Esc>", "v", "V", "o", "O", ":", "/", "?", "y", "Y", "q"].includes(cmd.action);
+                && !["<Esc>", "v", "V", "<C-v>", "o", "O", ":", "/", "?", "y", "Y", "q"].includes(cmd.action);
         return cmd.op ? cmd.op !== "y" : changeActions.includes(cmd.action);
     }
 
@@ -814,8 +825,9 @@ QtObject {
         }
         case "v":
         case "V":
+        case "<C-v>":
             anchor = p;
-            setMode(cmd.action === "v" ? "visual" : "visualLine");
+            setMode(visualModes[cmd.action]);
             setCursor(p);
             break;
         case "x":
@@ -949,14 +961,22 @@ QtObject {
         }
         const a = cmd.action;
         lastVisual = { mode: mode, anchor: anchor, cursor: cursor };
-        if (a === "<Esc>" || a === "v" && mode === "visual" || a === "V" && mode === "visualLine") {
+        if (a === "<Esc>" || visualModes[a] === mode) {
             setMode("normal");
             setCursor(clampNormal(t, cursor));
             return;
         }
-        if (a === "v" || a === "V") {
-            setMode(a === "v" ? "visual" : "visualLine");
+        if (visualModes[a]) {
+            setMode(visualModes[a]);
             setCursor(cursor);
+            return;
+        }
+        if (a === "O" && mode === "visualBlock") {
+            // To the other corner on the same line.
+            const ca = column(t, anchor), cc = column(t, cursor);
+            const la = lineStart(t, anchor), lc = lineStart(t, cursor);
+            anchor = advance(t, la, cc, lineEnd(t, la));
+            setCursor(advance(t, lc, ca, lineEnd(t, lc)));
             return;
         }
         if (a === "o" || a === "O") {
@@ -974,6 +994,8 @@ QtObject {
             startRecording(cmd.ch);
             return;
         }
+        if (mode === "visualBlock" && executeBlock(cmd))
+            return;
 
         const lo = Math.min(anchor, cursor), hi = Math.max(anchor, cursor);
         const lineRange = { start: lineStart(t, lo), end: Math.min(lineEnd(t, hi) + 1, n), linewise: true };
@@ -1035,6 +1057,14 @@ QtObject {
         case "gJ":
             joinLines(spannedLines(t.slice(lineRange.start, lineRange.end)), a === "J");
             break;
+        case "I":
+            startInsert(1, range.start, null);
+            insertSession.dot = null;
+            break;
+        case "A":
+            startInsert(1, range.linewise ? lineEnd(t, hi) : range.end, null);
+            insertSession.dot = null;
+            break;
         case "p":
         case "P": {
             const r = getRegister(cmd.reg);
@@ -1073,6 +1103,7 @@ QtObject {
     // Moving around in insert mode ends the repeatable part of the insert and
     // starts a new undo step, like in vim.
     function breakInsert() {
+        endBlockInsert();
         const s = insertSession;
         if (s && !s.broken) {
             if (s.dot)
@@ -1084,6 +1115,8 @@ QtObject {
     }
 
     function leaveInsert() {
+        // After a block insert, the cursor goes back to where it started.
+        const home = endBlockInsert();
         const s = insertSession;
         if (s && !s.broken) {
             for (let i = 1; i < s.count; i++) {
@@ -1101,7 +1134,7 @@ QtObject {
         insertSession = null;
         replaceStack = [];
         const t = editor.text;
-        const p = cursor > lineStart(t, cursor) ? charStart(t, cursor - 1) : cursor;
+        const p = home >= 0 ? home : cursor > lineStart(t, cursor) ? charStart(t, cursor - 1) : cursor;
         setMode("normal");
         commitChange();
         setCursor(clampNormal(t, p));
@@ -1176,6 +1209,254 @@ QtObject {
             leaveInsert();
         }
         replaying = false;
+    }
+
+    // ---- Visual block ------------------------------------------------------
+    // Columns count characters, as elsewhere. After "$" the block reaches the
+    // end of every line.
+
+    // The block's columns (right is Infinity after "$") and one entry per
+    // line, top to bottom: { line, ls, le, start, end, cols }, where
+    // [start, end) is the part in the block (empty if the line is too short)
+    // and cols the line's length.
+    function blockShape(t) {
+        const ca = column(t, anchor), cc = column(t, cursor);
+        const left = Math.min(ca, cc), right = wantCol === Infinity ? Infinity : Math.max(ca, cc);
+        const last = lineStart(t, Math.max(anchor, cursor));
+        const lines = [];
+        let ls = lineStart(t, Math.min(anchor, cursor));
+        for (let line = lineOf(t, ls); ; line++) {
+            const le = lineEnd(t, ls);
+            const start = advance(t, ls, left, le);
+            lines.push({ line: line, ls: ls, le: le, start: start,
+                end: right === Infinity ? le : advance(t, start, right - left + 1, le), cols: column(t, le) });
+            if (ls >= last)
+                break;
+            ls = le + 1;
+        }
+        return { left: left, right: right, lines: lines };
+    }
+
+    // The block as { start, end } spans, for drawing it.
+    function blockSpans() {
+        return blockShape(editor.text).lines.filter(l => l.end > l.start).map(l => ({ start: l.start, end: l.end }));
+    }
+
+    // Runs a visual block command. Returns false for the ones that work on
+    // whole lines, as in the other visual modes.
+    function executeBlock(cmd) {
+        const t = editor.text;
+        const a = cmd.action;
+        const b = blockShape(t);
+        const lines = b.lines;
+        if (["D", "C"].includes(a))
+            for (const l of lines)
+                l.end = l.le;
+        // Lines that reach the block; the others are left alone.
+        const reached = lines.filter(l => l.cols > b.left);
+        const points = (reached.length ? reached : lines.slice(0, 1))
+            .map(l => ({ line: l.line, offset: l.start - l.ls, pad: "" }));
+        const home = () => {
+            const nt = editor.text;
+            const ls = lineToPos(nt, lines[0].line);
+            setCursor(clampNormal(nt, advance(nt, ls, b.left, lineEnd(nt, ls))));
+            wantCol = column(nt, cursor);
+        };
+        switch (a) {
+        case "y":
+        case "d":
+        case "x":
+        case "<Del>":
+        case "D":
+        case "c":
+        case "s":
+        case "C": {
+            const r = blockText(t, lines);
+            setRegister(cmd.reg, r.text, false, a === "y", r.entries, true);
+            setMode("normal");
+            if (a !== "y")
+                deleteBlock(lines);
+            if (["c", "s", "C"].includes(a))
+                startBlockInsert(points);
+            else
+                home();
+            return true;
+        }
+        case "I":
+        case "A": {
+            setMode("normal");
+            if (a === "A") {
+                const col = b.right + 1;
+                points.length = 0;
+                for (const l of lines) {
+                    if (b.right === Infinity || l.cols < col)
+                        points.push({ line: l.line, offset: l.le - l.ls,
+                            pad: b.right === Infinity ? "" : " ".repeat(col - l.cols) });
+                    else
+                        points.push({ line: l.line, offset: advance(t, l.ls, col, l.le) - l.ls, pad: "" });
+                }
+            }
+            startBlockInsert(points);
+            return true;
+        }
+        case "~":
+        case "u":
+        case "U":
+        case "g~":
+        case "gu":
+        case "gU":
+            setMode("normal");
+            for (let i = lines.length - 1; i >= 0; i--)
+                changeCase(lines[i], a[a.length - 1]);
+            home();
+            return true;
+        case "r":
+            setMode("normal");
+            if (cmd.ch !== "\n") {
+                for (let i = lines.length - 1; i >= 0; i--) {
+                    const l = lines[i];
+                    let s = "";
+                    for (let q = l.start; q < l.end; q = charEnd(t, q))
+                        s += cmd.ch;
+                    replaceRange(l.start, l.end, s);
+                }
+            }
+            home();
+            return true;
+        case "p":
+        case "P": {
+            const r = getRegister(cmd.reg);
+            if (!r)
+                return true;
+            const removed = blockText(t, lines);
+            setMode("normal");
+            deleteBlock(lines);
+            if (r.blockwise) {
+                putBlock(r, lines[0].line, b.left, 1);
+            } else if (!r.linewise && !r.text.includes("\n")) {
+                // One line of text goes on every line of the block.
+                for (let i = points.length - 1; i >= 0; i--) {
+                    const p = lineToPos(editor.text, points[i].line) + points[i].offset;
+                    replaceRange(p, p, r.text, r.hidden);
+                }
+            } else {
+                const nt = editor.text;
+                setCursor(r.linewise ? lineToPos(nt, lines[lines.length - 1].line)
+                    : lineToPos(nt, points[0].line) + points[0].offset);
+                paste(cmd.reg, r.linewise, 1);
+            }
+            if (a === "p")
+                setRegister(null, removed.text, false, false, removed.entries, true);
+            if (!r.linewise)
+                home();
+            return true;
+        }
+        }
+        return false;
+    }
+
+    // The text of a block's lines, one per line, with its hidden entries.
+    function blockText(t, lines) {
+        let text = "", entries = [];
+        lines.forEach((l, i) => {
+            if (i > 0)
+                text += "\n";
+            entries = entries.concat(shifted(hiddenIn(hidden, l.start, l.end), text.length));
+            text += t.slice(l.start, l.end);
+        });
+        return { text: text, entries: entries };
+    }
+
+    function deleteBlock(lines) {
+        // Bottom up, so the positions above stay right.
+        for (let i = lines.length - 1; i >= 0; i--)
+            replaceRange(lines[i].start, lines[i].end, "");
+    }
+
+    // Puts a blockwise register's lines at column `col` of line `line` and
+    // the lines below it, adding lines at the end and padding short lines
+    // with spaces where needed.
+    function putBlock(r, line, col, count) {
+        const pieces = r.text.split("\n");
+        const width = Math.max(...pieces.map(s => column(s, s.length)));
+        let from = 0;
+        pieces.forEach((piece, i) => {
+            const entries = hiddenIn(r.hidden, from, from + piece.length);
+            from += piece.length + 1;
+            if (line + i > countLines(editor.text))
+                replaceRange(editor.length, editor.length, "\n");
+            const t = editor.text;
+            const ls = lineToPos(t, line + i), le = lineEnd(t, ls);
+            const cols = column(t, le);
+            const at = advance(t, ls, col, le);
+            const lead = " ".repeat(Math.max(0, col - cols));
+            // Pad each copy to the block's width, unless nothing follows it.
+            const padded = piece + " ".repeat(width - column(piece, piece.length));
+            const body = lead + (at < le ? padded.repeat(count) : padded.repeat(count - 1) + piece);
+            replaceRange(at, at, body, shifted(repeated(entries, padded.length, count), lead.length));
+        });
+    }
+
+    // Starts insert mode at the first of `points` ({ line, offset, pad }, top
+    // to bottom: offset is from the line's start, pad goes before the text),
+    // copying what's typed there to the others.
+    function startBlockInsert(points) {
+        const first = points[0];
+        let t = editor.text;
+        const ls = lineToPos(t, first.line);
+        let p = ls + first.offset;
+        if (first.pad) {
+            replaceRange(p, p, first.pad);
+            p += first.pad.length;
+            t = editor.text;
+        }
+        startInsert(1, p, null);
+        insertSession.dot = null;
+        blockInsert = { line: first.line, before: t.slice(ls, p), after: t.slice(p, lineEnd(t, p)), typed: "",
+            targets: points.slice(1) };
+        mirrorBlock();
+    }
+
+    // Copies what's been typed on the block insert's first line to the other
+    // lines and puts their cursors where the first line's is. Returns false
+    // if the line changed in some other way (a line break was typed, say),
+    // and then copies nothing and shows no other cursors.
+    function mirrorBlock() {
+        const b = blockInsert;
+        if (!b)
+            return false;
+        const t = editor.text;
+        const ls = lineToPos(t, b.line), le = lineEnd(t, ls);
+        const at = ls + b.before.length, end = le - b.after.length;
+        if (end < at || t.slice(ls, at) !== b.before || t.slice(end, le) !== b.after) {
+            blockCursors = [];
+            return false;
+        }
+        const typed = t.slice(at, end);
+        if (typed !== b.typed) {
+            for (let i = b.targets.length - 1; i >= 0; i--) {
+                const g = b.targets[i];
+                const p = lineToPos(editor.text, g.line) + g.offset;
+                replaceRange(p, p + (b.typed ? g.pad.length + b.typed.length : 0), typed ? g.pad + typed : "");
+            }
+            b.typed = typed;
+        }
+        const nt = editor.text;
+        const k = Math.max(0, Math.min(cursor - at, typed.length));
+        blockCursors = b.targets.map(g => lineToPos(nt, g.line) + g.offset + (typed ? g.pad.length : 0) + k);
+        return true;
+    }
+
+    // Ends a block insert. Returns where its text starts on the first line,
+    // or -1.
+    function endBlockInsert() {
+        const b = blockInsert;
+        if (!b)
+            return -1;
+        const ok = mirrorBlock();
+        blockInsert = null;
+        blockCursors = [];
+        return ok ? lineToPos(editor.text, b.line) + b.before.length : -1;
     }
 
     // ---- Macros ------------------------------------------------------------
@@ -1294,7 +1575,11 @@ QtObject {
     function updateSelection() {
         const t = editor.text;
         const n = t.length;
-        if (mode === "visualLine") {
+        if (mode === "visualBlock") {
+            // The editor's selection can't be a block: the view draws it.
+            editor.deselect();
+            editor.cursorPosition = Math.min(cursor, n);
+        } else if (mode === "visualLine") {
             const s = lineStart(t, Math.min(anchor, cursor));
             const e = Math.min(lineEnd(t, Math.max(anchor, cursor)) + 1, n);
             if (cursor >= anchor)
@@ -1367,21 +1652,23 @@ QtObject {
 
     // ---- Registers -------------------------------------------------------
 
-    // `entries` are the hidden-text entries for `text`, if it has any.
-    function setRegister(name, text, linewise, isYank, entries) {
+    // `entries` are the hidden-text entries for `text`, if it has any. A
+    // blockwise register holds a visual block, one line of it per line.
+    function setRegister(name, text, linewise, isYank, entries, blockwise) {
         if (name === "_")
             return;
         entries = entries || [];
+        blockwise = !!blockwise;
         // The clipboard registers are separate: writing them leaves the
         // unnamed register (what plain "p" pastes) alone. Other apps get the
         // hidden texts revealed; VimEdit gets the 💩s back.
         if (name === "+" || name === "*") {
             if (clipboard)
-                clipboard.setClipboardText(revealAll(text, entries),
-                    entries.length ? JSON.stringify({ text: text, hidden: entries }) : "");
+                clipboard.setClipboardText(revealAll(text, entries), entries.length || blockwise
+                    ? JSON.stringify({ text: text, hidden: entries, block: blockwise }) : "");
             return;
         }
-        const entry = { text: text, linewise: linewise, hidden: entries };
+        const entry = { text: text, linewise: linewise, hidden: entries, blockwise: blockwise };
         if (name && /^[A-Z]$/.test(name)) {
             const key = name.toLowerCase();
             const old = registers[key];
@@ -1407,7 +1694,8 @@ QtObject {
             try {
                 const d = JSON.parse(clipboard.clipboardData() || "null");
                 if (d && typeof d.text === "string" && validHidden(d.text, d.hidden))
-                    return { text: d.text, linewise: d.text.endsWith("\n"), hidden: d.hidden };
+                    return { text: d.text, linewise: !d.block && d.text.endsWith("\n"), hidden: d.hidden,
+                        blockwise: !!d.block };
             } catch (e) {
                 // not ours after all: use the text
             }
@@ -1448,6 +1736,15 @@ QtObject {
             return;
         const t = editor.text;
         const p = cursor;
+        if (r.blockwise) {
+            const line = lineOf(t, p);
+            const col = column(t, p) + (after && p < lineEnd(t, p) ? 1 : 0);
+            putBlock(r, line, col, count);
+            const nt = editor.text;
+            const ls = lineToPos(nt, line);
+            setCursor(clampNormal(nt, advance(nt, ls, col, lineEnd(nt, ls))));
+            return;
+        }
         let entries = repeated(r.hidden, r.text.length, count);
         if (r.linewise) {
             let body = r.text.repeat(count);
@@ -1495,6 +1792,8 @@ QtObject {
 
         function onTextChanged() {
             vim.trackEdit();
+            if (vim.blockInsert)
+                Qt.callLater(vim.mirrorBlock);
         }
     }
 
@@ -2608,6 +2907,14 @@ QtObject {
             pos = nl + 1;
         }
         return pos;
+    }
+
+    // The line number (from 1) of position p.
+    function lineOf(t, p) {
+        let line = 1;
+        for (let i = t.indexOf("\n"); i >= 0 && i < p; i = t.indexOf("\n", i + 1))
+            line++;
+        return line;
     }
 
     // ---- View ----------------------------------------------------------

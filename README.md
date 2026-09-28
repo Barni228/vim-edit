@@ -6,8 +6,11 @@ A minimal plain-text editor in Rust + Qt 6 ([CXX-Qt](https://github.com/KDAB/cxx
 
 The editor starts in normal mode. It supports the common vim commands:
 
-- Modes: insert (`i a I A o O`), visual (`v V`), replace (`R`, `r`), with a block,
-  bar or underline cursor to match.
+- Modes: insert (`i a I A o O`), visual (`v V Ctrl-V`), replace (`R`, `r`), with a
+  block, bar or underline cursor to match.
+- Visual block (`Ctrl-V`): `I`, `A` and `c` type on every line of the block at
+  once, `$A` appends to every line, and `d y p x r ~ u U o O` work on the block.
+  A yanked block pastes as a block. In insert mode Ctrl-V still pastes.
 - Motions: `h j k l w b e ge W B E 0 ^ $ gg G f t F T ; , % { } H M L n N * #`,
   `Ctrl-D/U/F/B`, all with counts.
 - Operators `d c y > < g~ gu gU` with motions and text objects (`iw aw i" a" i( a(`

@@ -121,6 +121,8 @@ ApplicationWindow {
 
             // Bumped on every edit, for things that must refresh after one.
             property int revision: 0
+            // Whether the insert-mode bars are in the visible half of a blink.
+            property bool blinkOn: true
 
             // The rectangle of the character at pos. positionToRectangle gives
             // a line with an emoji its natural height, but every line is
@@ -145,15 +147,22 @@ ApplicationWindow {
             }
 
             // The selection in the visible lines, as one { start, end, eol }
-            // span per line, where eol means it includes the line break.
+            // span per line, where eol means it includes the line break. A
+            // visual block isn't the editor's selection, so vim gives it.
             function selectionSpans() {
+                const block = vim.mode === "visualBlock";
                 const s = selectionStart, e = selectionEnd;
-                if (s === e)
+                if (s === e && !block)
                     return [];
                 const t = text, f = scrollView.contentItem;
                 const top = Math.floor((f.contentY - topPadding) / root.lineHeight);
                 const bottom = Math.ceil((f.contentY + f.height - topPadding) / root.lineHeight);
-                const to = Math.min(e, vim.lineEnd(t, vim.lineToPos(t, Math.max(bottom, 0) + 1)));
+                const last = vim.lineEnd(t, vim.lineToPos(t, Math.max(bottom, 0) + 1));
+                if (block) {
+                    const first = vim.lineToPos(t, Math.max(top, 0) + 1);
+                    return vim.blockSpans().filter(r => r.start >= first && r.start <= last);
+                }
+                const to = Math.min(e, last);
                 const spans = [];
                 for (let p = Math.max(s, vim.lineToPos(t, Math.max(top, 0) + 1)); p <= to;) {
                     const le = vim.lineEnd(t, p);
@@ -179,7 +188,10 @@ ApplicationWindow {
                 root.modified = true;
                 revision++;
             }
-            onCursorPositionChanged: vim.syncFromEditor()
+            onCursorPositionChanged: {
+                blinkOn = true;
+                vim.syncFromEditor();
+            }
             onSelectedTextChanged: vim.syncFromEditor()
             onRevisionChanged: hover.hide()
             onActiveFocusChanged: if (!activeFocus) hover.hide()
@@ -205,10 +217,8 @@ ApplicationWindow {
             cursorDelegate: Item {
                 id: bar
 
-                property bool blinkOn: true
-
                 width: 2
-                visible: vim.mode === "insert" && editor.activeFocus && blinkOn
+                visible: vim.mode === "insert" && editor.activeFocus && editor.blinkOn
 
                 Rectangle {
                     y: editor.bandAt(editor.cursorPosition).y - bar.y
@@ -216,20 +226,32 @@ ApplicationWindow {
                     height: metrics.height
                     color: editor.color
                 }
+            }
 
-                Timer {
-                    interval: 530
-                    repeat: true
-                    running: vim.mode === "insert" && editor.activeFocus
-                    onRunningChanged: bar.blinkOn = true
-                    onTriggered: bar.blinkOn = !bar.blinkOn
-                }
-                Connections {
-                    target: editor
+            // The bars blink together: the one above and, in a block insert,
+            // the other lines' bars.
+            Timer {
+                interval: 530
+                repeat: true
+                running: vim.mode === "insert" && editor.activeFocus
+                onRunningChanged: editor.blinkOn = true
+                onTriggered: editor.blinkOn = !editor.blinkOn
+            }
 
-                    function onCursorPositionChanged() {
-                        bar.blinkOn = true;
-                    }
+            // A block insert types on every line: a bar on each of the others.
+            Repeater {
+                model: vim.blockCursors
+
+                Rectangle {
+                    required property int modelData
+                    readonly property rect band: editor.bandAt(modelData)
+
+                    x: band.x
+                    y: band.y
+                    width: 2
+                    height: band.height
+                    color: editor.color
+                    visible: vim.mode === "insert" && editor.activeFocus && editor.blinkOn
                 }
             }
 
@@ -240,6 +262,7 @@ ApplicationWindow {
 
                 property var spans: []
                 readonly property var inputs: [editor.selectionStart, editor.selectionEnd, editor.revision,
+                    vim.mode, vim.anchor, vim.cursor, vim.wantCol,
                     scrollView.contentItem.contentY, scrollView.contentItem.height,
                     editor.contentWidth, editor.contentHeight]
 

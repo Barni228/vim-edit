@@ -69,6 +69,16 @@ VimEdit: a plain-text editor in Rust + Qt 6 via cxx-qt 0.10, with the UI in QML.
   `runKey` with no key event, so vim types insert-mode keys itself (`typeKey`,
   `insertMove`). A failing command (bad keys, failed motion, `showError`)
   empties `typeahead`, and a run stops after `maxMacroKeys` keys.
+- **Visual block** (`visualBlock`): the editor's selection can't be a block, so
+  it's cleared and `main.qml` draws `vim.blockSpans()`. Columns count characters,
+  and `wantCol === Infinity` (after `$`) makes the block reach every line end.
+  `I`/`A`/`c` start a `blockInsert`: after each edit (`Qt.callLater` from
+  `onTextChanged`), `mirrorBlock` copies the text typed on the first line to the
+  other lines, which are kept as line numbers plus offsets since the lines above
+  them change. It also sets `blockCursors`, where `main.qml` draws a bar for
+  each other line (blinking with the real one via `editor.blinkOn`). Ctrl+V is
+  Paste on Windows, so `handleKey` lets it through as
+  `<C-v>` outside insert mode; in insert mode it pastes on every OS.
 - **Hidden text** (Cmd+J): the document holds a plain 💩, and `Vim.hidden` keeps
   the text beside it as `{ at, item }` entries. Vim's edits shift the entries in
   `replaceRange` (pass the entries of inserted text), editor-made edits (insert
