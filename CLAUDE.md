@@ -33,8 +33,10 @@ VimEdit: a plain-text editor in Rust + Qt 6 via cxx-qt 0.10, with the UI in QML.
   created in `Component.onCompleted`, so only one exists at a time.
 - Qt titles the PreferencesRole item "Preferences..."; a `QTranslator` for the
   `MAC_APPLICATION_MENU` context renames it to "Settings…".
-- **Shortcuts**: use `StandardKey` where Qt has a binding. `StandardKey.ZoomIn` also
-  fires on Cmd/Ctrl+= (tested), even though Qt lists only Ctrl++. The Windows/Linux menu
+- **Shortcuts**: use `StandardKey` where Qt has a binding. On macOS
+  `StandardKey.ZoomIn` also fires on Cmd+= (tested), even though Qt lists only
+  Ctrl++; on Windows it doesn't, so that menu uses "Ctrl+=" plus a `Shortcut` for
+  Ctrl++. The Windows/Linux menu
   writes "Ctrl+," and "Ctrl+Q" as plain strings, because `Preferences` and `Quit` have no
   Ctrl binding on Windows. "Ctrl+0" has no `StandardKey`. In strings, Qt maps Ctrl to
   Cmd on macOS.
@@ -48,7 +50,9 @@ VimEdit: a plain-text editor in Rust + Qt 6 via cxx-qt 0.10, with the UI in QML.
   cc and rustc target the build machine's macOS version. `macdeployqt` breaks
   signatures, so the bundle is re-signed ad hoc. The Homebrew-only `macdeployqt` errors
   about QtSvg are harmless.
-- **Windows**: the MSVC CRT DLLs are copied app-locally, so no VC++ Redistributable is
+- **Windows**: `main.rs` sets `QT_QUICK_CONTROLS_STYLE=FluentWinUI3`, because the
+  default "Windows" style has no dark theme. Its framed TextArea background is
+  replaced with a plain one. The MSVC CRT DLLs are copied app-locally, so no VC++ Redistributable is
   needed. `package-windows.ps1` loads the VS dev shell itself; `ilammy/msvc-dev-cmd`
   was removed because it's stuck on Node 20.
 

@@ -593,7 +593,9 @@ ApplicationWindow {
 
                 Action {
                     text: qsTr("Zoom &In")
-                    shortcut: StandardKey.ZoomIn
+                    // StandardKey.ZoomIn is only Ctrl++ (Ctrl+Shift+=) here;
+                    // zoomInShortcut adds that.
+                    shortcut: "Ctrl+="
                     onTriggered: root.zoom(1)
                 }
                 Action {
@@ -610,11 +612,33 @@ ApplicationWindow {
         }
     }
 
+    // Windows / Linux: the menu's Zoom In is Ctrl+=; this keeps Ctrl++ too.
+    // On macOS, StandardKey.ZoomIn already covers both.
+    Shortcut {
+        id: zoomInShortcut
+
+        enabled: !root.isMac
+        sequences: [StandardKey.ZoomIn]
+        onActivated: root.zoom(1)
+    }
+
+    // Windows / Linux: the style frames a TextArea like a text field (with an
+    // accent line when focused), which doesn't suit a full-window editor.
+    Component {
+        id: plainBackground
+
+        Rectangle {
+            color: editor.palette.base
+        }
+    }
+
     Component.onCompleted: {
-        if (isMac)
+        if (isMac) {
             macMenuBar.createObject(root, { window: root });
-        else
+        } else {
             root.menuBar = windowMenuBar.createObject(root);
+            editor.background = plainBackground.createObject(editor);
+        }
 
         // The editor sits in a ScrollView, which is its own focus scope, so
         // `focus: true` alone doesn't give it the keyboard.
