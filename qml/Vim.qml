@@ -48,7 +48,7 @@ QtObject {
     signal hoverRequested(int at)
 
     readonly property bool isMac: Qt.platform.os === "osx"
-    readonly property var operators: ["d", "c", "y", ">", "<", "g~", "gu", "gU"]
+    readonly property var operators: ["d", "c", "y", ">", "<", "g~", "gu", "gU", "g?"]
     readonly property var motions: ["h", "j", "k", "l", "<Left>", "<Right>", "<Up>", "<Down>", "<BS>", " ",
         "w", "W", "b", "B", "e", "E", "ge", "gE", "0", "^", "$", "<Home>", "<End>", "gg", "G",
         ";", ",", "%", "{", "}", "+", "-", "_", "<CR>", "|", "n", "N", "*", "#", "H", "M", "L",
@@ -1090,6 +1090,9 @@ QtObject {
         case "gU":
             changeCase(range, "U");
             break;
+        case "g?":
+            changeCase(range, "?");
+            break;
         case "r": {
             if (cmd.ch !== "\n") {
                 let s = "";
@@ -1370,6 +1373,7 @@ QtObject {
         case "g~":
         case "gu":
         case "gU":
+        case "g?":
             setMode("normal");
             for (let i = lines.length - 1; i >= 0; i--)
                 changeCase(lines[i], a[a.length - 1]);
@@ -2160,12 +2164,23 @@ QtObject {
         setCursor(clampNormal(editor.text, firstNonBlank(editor.text, s)));
     }
 
+    // how: "~" toggles the case, "u" lowers it, "U" raises it, and "?" (g?)
+    // is ROT13.
     function changeCase(range, how) {
         const t = editor.text;
         const s = t.slice(range.start, range.end);
-        const text = how === "u" ? s.toLowerCase() : how === "U" ? s.toUpperCase() : toggleCase(s);
+        const text = how === "u" ? s.toLowerCase() : how === "U" ? s.toUpperCase()
+            : how === "?" ? rot13(s) : toggleCase(s);
         replaceRange(range.start, range.end, text, carriedHidden(range.start, range.end, text));
         setCursor(clampNormal(editor.text, range.start));
+    }
+
+    // Moves each ASCII letter 13 places along the alphabet.
+    function rot13(s) {
+        return s.replace(/[a-zA-Z]/g, c => {
+            const base = c <= "Z" ? 65 : 97;
+            return String.fromCharCode((c.charCodeAt(0) - base + 13) % 26 + base);
+        });
     }
 
     function toggleCase(s) {

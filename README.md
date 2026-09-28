@@ -20,7 +20,7 @@ The editor starts in normal mode. It supports the common vim commands:
   them. The status line shows MULTI CURSOR while there's more than one.
 - Motions: `h j k l w b e ge W B E 0 ^ $ gg G f t F T ; , % { } H M L n N * #`,
   `Ctrl-D/U/F/B`, all with counts.
-- Operators `d c y > < g~ gu gU` with motions and text objects (`iw aw i" a" i( a(`
+- Operators `d c y > < g~ gu gU g?` with motions and text objects (`iw aw i" a" i( a(`
   `i{ a{ ip ap` and so on), plus `x X s S C D Y p P J r ~ u Ctrl-R .`
 - Registers: yanks and deletes stay inside the editor. Use `"+` or `"*` for the
   system clipboard, and `"a`–`"z` for named registers.
