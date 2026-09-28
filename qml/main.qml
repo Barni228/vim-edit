@@ -622,8 +622,8 @@ ApplicationWindow {
         onActivated: root.zoom(1)
     }
 
-    // Windows / Linux: the style frames a TextArea like a text field (with an
-    // accent line when focused), which doesn't suit a full-window editor.
+    // Windows / Linux: Fusion frames a TextArea like a text field, which
+    // doesn't suit a full-window editor.
     Component {
         id: plainBackground
 
