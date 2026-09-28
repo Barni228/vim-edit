@@ -53,12 +53,12 @@ QtObject {
         "<C-d>", "<C-u>", "<C-f>", "<C-b>", "<PageDown>", "<PageUp>"]
     readonly property var normalActions: ["i", "a", "I", "A", "gI", "o", "O", "v", "V", "x", "<Del>", "X",
         "s", "S", "C", "D", "Y", "p", "P", "J", "gJ", "u", "<C-r>", ".", "~", "r", "R", ":", "/", "?",
-        "ZZ", "ZQ", "zz", "zt", "zb", "gv", "gh", "<Esc>"]
+        "ZZ", "ZQ", "zz", "zt", "zb", "gv", "gh", "<C-a>", "<C-x>", "<Esc>"]
     readonly property var visualActions: ["<Esc>", "v", "V", "o", "O", "x", "<Del>", "X", "D", "s", "C",
         "S", "R", "Y", "~", "u", "U", "r", "J", "gJ", "p", "P", ":", "/", "?"]
     // Normal-mode commands that modify the text (and so can be repeated with ".").
     readonly property var changeActions: ["i", "a", "I", "A", "gI", "o", "O", "x", "<Del>", "X", "s", "S",
-        "C", "D", "p", "P", "J", "gJ", "~", "r", "R"]
+        "C", "D", "p", "P", "J", "gJ", "~", "r", "R", "<C-a>", "<C-x>"]
     readonly property var textObjects: ["w", "W", "p", "\"", "'", "`", "(", ")", "b", "[", "]", "{", "}",
         "B", "<", ">"]
 
@@ -154,12 +154,15 @@ QtObject {
                 return true;
             }
         } else {
+            // On Windows and Linux, Ctrl+A and Ctrl+X are Select All and Cut,
+            // except in normal mode, where they add to a number as in vim.
+            const addKey = mode === "normal" && ["<C-a>", "<C-x>"].includes(tokenFor(event));
             if (event.matches(StandardKey.Copy)) {
                 if (isVisual)
                     execute({ reg: "+", count: 0, action: "y" });
                 return true;
             }
-            if (event.matches(StandardKey.Cut)) {
+            if (event.matches(StandardKey.Cut) && !addKey) {
                 if (isVisual)
                     execute({ reg: "+", count: 0, action: "d" });
                 return true;
@@ -169,7 +172,7 @@ QtObject {
                     execute({ reg: "+", count: 0, action: "P" });
                 return true;
             }
-            if (event.matches(StandardKey.SelectAll)) {
+            if (event.matches(StandardKey.SelectAll) && !addKey) {
                 if (mode !== "replace") {
                     setMode("visualLine");
                     anchor = 0;
@@ -835,6 +838,10 @@ QtObject {
         case "gh":
             if (hiddenAt(p))
                 hoverRequested(p);
+            break;
+        case "<C-a>":
+        case "<C-x>":
+            addToNumber(cmd.action === "<C-a>" ? count : -count);
             break;
         }
     }
@@ -1529,6 +1536,41 @@ QtObject {
             pos = le;
         }
         setCursor(clampNormal(editor.text, pos));
+    }
+
+    // Adds `delta` to the number under or after the cursor on its line:
+    // decimal (with an optional "-"), 0x hex or 0b binary. Hex and binary
+    // numbers, and decimals with leading zeros, keep their width.
+    function addToNumber(delta) {
+        const t = editor.text;
+        const ls = lineStart(t, cursor), le = lineEnd(t, cursor);
+        const re = /0[xX][0-9a-fA-F]+|0[bB][01]+|-?(?!0[xX][0-9a-fA-F]|0[bB][01])[0-9]+/g;
+        const line = t.slice(ls, le);
+        let m;
+        do
+            m = re.exec(line);
+        while (m && ls + m.index + m[0].length <= cursor);
+        if (!m)
+            return;
+        const s = m[0];
+        let text;
+        if (/^0[xXbB]/.test(s)) {
+            const base = /^0[xX]/.test(s) ? 16 : 2;
+            const digits = s.slice(2);
+            text = Math.max(0, parseInt(digits, base) + delta).toString(base).padStart(digits.length, "0");
+            const letters = digits.match(/[a-fA-F]/g);
+            if (letters && /[A-F]/.test(letters[letters.length - 1]))
+                text = text.toUpperCase();
+            text = s.slice(0, 2) + text;
+        } else {
+            const n = parseInt(s, 10) + delta;
+            const digits = s.replace("-", "");
+            const width = digits.length > 1 && digits[0] === "0" ? digits.length : 1;
+            text = (n < 0 ? "-" : "") + String(Math.abs(n)).padStart(width, "0");
+        }
+        const start = ls + m.index;
+        replaceRange(start, start + s.length, text);
+        setCursor(start + text.length - 1);
     }
 
     function shiftLines(range, dir, times) {
