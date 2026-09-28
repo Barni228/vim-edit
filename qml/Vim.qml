@@ -33,12 +33,12 @@ QtObject {
     readonly property bool isVisual: mode === "visual" || mode === "visualLine"
     readonly property string cursorShape: mode === "insert" ? "bar"
         : mode === "replace" || awaitingReplaceChar ? "underline" : "block"
-    readonly property string modeLabel: ({
+    readonly property string modeLabel: [({
             insert: "-- INSERT --",
             replace: "-- REPLACE --",
             visual: "-- VISUAL --",
             visualLine: "-- VISUAL LINE --"
-        })[mode] || ""
+        })[mode] || "", recording ? "recording @" + recording : ""].filter(s => s).join(" ")
 
     signal writeRequested(bool quit)
     signal quitRequested(bool force)
@@ -53,9 +53,9 @@ QtObject {
         "<C-d>", "<C-u>", "<C-f>", "<C-b>", "<PageDown>", "<PageUp>"]
     readonly property var normalActions: ["i", "a", "I", "A", "gI", "o", "O", "v", "V", "x", "<Del>", "X",
         "s", "S", "C", "D", "Y", "p", "P", "J", "gJ", "u", "<C-r>", ".", "~", "r", "R", ":", "/", "?",
-        "ZZ", "ZQ", "zz", "zt", "zb", "gv", "gh", "<C-a>", "<C-x>", "<Esc>"]
+        "ZZ", "ZQ", "zz", "zt", "zb", "gv", "gh", "<C-a>", "<C-x>", "q", "@", "<Esc>"]
     readonly property var visualActions: ["<Esc>", "v", "V", "o", "O", "x", "<Del>", "X", "D", "s", "C",
-        "S", "R", "Y", "~", "u", "U", "r", "J", "gJ", "p", "P", ":", "/", "?"]
+        "S", "R", "Y", "~", "u", "U", "r", "J", "gJ", "p", "P", ":", "/", "?", "q"]
     // Normal-mode commands that modify the text (and so can be repeated with ".").
     readonly property var changeActions: ["i", "a", "I", "A", "gI", "o", "O", "x", "<Del>", "X", "s", "S",
         "C", "D", "p", "P", "J", "gJ", "~", "r", "R", "<C-a>", "<C-x>"]
@@ -76,6 +76,15 @@ QtObject {
     property var replaceStack: []
     property bool syncing: false
     property bool replaying: false
+    // Macros: the register being recorded into ("" when not recording) and
+    // the keys typed so far. Running a macro puts its keys in `typeahead`,
+    // which runs them one by one; a failing command empties it, as in vim.
+    property string recording: ""
+    property var recordKeys: []
+    property var typeahead: []
+    property bool draining: false
+    property string lastMacro: ""
+    readonly property int maxMacroKeys: 100000
     // Command-line history: ":" commands, and "/" and "?" searches together.
     property var history: ({ ":": [], "/": [] })
     property int historyIndex: -1 // -1 while not browsing
@@ -112,7 +121,7 @@ QtObject {
     // Returns whether the key was consumed; unconsumed keys go to the editor.
     function handleKey(event) {
         if (commandLine !== "")
-            return commandLineKey(tokenFor(event));
+            return typedKey(tokenFor(event), event);
         if (!isVisual && mode !== "insert")
             message = "";
         if (event.matches(StandardKey.Undo) || event.matches(StandardKey.Redo)) {
@@ -181,7 +190,20 @@ QtObject {
                 return true;
             }
         }
-        const tok = tokenFor(event);
+        return typedKey(tokenFor(event), event);
+    }
+
+    // A key the user typed, which a macro being recorded keeps.
+    function typedKey(tok, event) {
+        if (recording && tok !== null)
+            recordKeys.push(tok);
+        return runKey(tok, event);
+    }
+
+    // Runs a typed key, or one from a macro (with no event).
+    function runKey(tok, event) {
+        if (commandLine !== "")
+            return commandLineKey(tok);
         if (mode === "insert")
             return insertKey(tok, event);
         if (tok === null)
@@ -256,6 +278,7 @@ QtObject {
     function showError(text) {
         message = text;
         messageIsError = true;
+        typeahead = [];
     }
 
     function showMessage(text) {
@@ -314,10 +337,20 @@ QtObject {
         if (tok === null)
             return false;
         const s = insertSession;
-        if (["<Left>", "<Right>", "<Up>", "<Down>", "<Home>", "<End>", "<PageUp>", "<PageDown>"].includes(tok))
+        const move = ["<Left>", "<Right>", "<Up>", "<Down>", "<Home>", "<End>", "<PageUp>", "<PageDown>"].includes(tok);
+        const typed = !isSpecial(tok) || ["<CR>", "<Tab>", "<BS>", "<Del>"].includes(tok);
+        if (move)
             breakInsert();
-        else if (s && !s.broken && (!isSpecial(tok) || ["<CR>", "<Tab>", "<BS>", "<Del>"].includes(tok)))
+        else if (s && !s.broken && typed)
             s.keys.push(tok);
+        // A macro has no event for the editor to handle, so vim does it.
+        if (!event) {
+            if (move)
+                insertMove(tok);
+            else if (typed)
+                typeKey(tok);
+            return true;
+        }
         // The editor's backspace deletes one code point, which would leave
         // most of an emoji (or of a hidden-text 💩) behind.
         if (tok === "<BS>" && event.modifiers === Qt.NoModifier && editor.selectionStart === editor.selectionEnd) {
@@ -325,6 +358,30 @@ QtObject {
             return true;
         }
         return false;
+    }
+
+    // Moves the insert-mode cursor like the editor does for these keys.
+    function insertMove(tok) {
+        const t = editor.text, p = cursor;
+        let q = p;
+        if (tok === "<Left>") {
+            q = p > 0 ? charStart(t, p - 1) : p;
+        } else if (tok === "<Right>") {
+            q = p < t.length ? charEnd(t, p) : p;
+        } else if (tok === "<Home>") {
+            q = lineStart(t, p);
+        } else if (tok === "<End>") {
+            q = lineEnd(t, p);
+        } else {
+            const lines = tok === "<Up>" ? -1 : tok === "<Down>" ? 1 : tok === "<PageUp>" ? -pageLines : pageLines;
+            const col = column(t, p);
+            const r = lineMotion(t, p, lines);
+            if (r) {
+                const ls = lineStart(t, r.pos);
+                q = advance(t, ls, col, lineEnd(t, ls));
+            }
+        }
+        setCursor(q);
     }
 
     function openCommandLine(kind) {
@@ -424,6 +481,10 @@ QtObject {
     }
 
     function feed(tok) {
+        if (recording && tok === "q" && keys.length === 0) {
+            stopRecording();
+            return;
+        }
         keys.push(tok);
         const r = parse(keys, isVisual);
         if (r.status === "more") {
@@ -436,6 +497,8 @@ QtObject {
         awaitingReplaceChar = false;
         if (r.status === "ok")
             execute(r.cmd);
+        else
+            typeahead = [];
     }
 
     // ---- Parsing -----------------------------------------------------------
@@ -530,6 +593,16 @@ QtObject {
             if (ch === null)
                 return bad;
             cmd.ch = ch;
+        } else if (w.name === "q" || w.name === "@") {
+            // The register to record into, or to run. A plain "q" stops a
+            // recording (see feed).
+            if (w.name === "q" && recording)
+                return bad;
+            if (w.next >= keys.length)
+                return more;
+            if (!(w.name === "q" ? /^[0-9a-zA-Z"]$/ : /^[0-9a-zA-Z"+*:@-]$/).test(keys[w.next]))
+                return bad;
+            cmd.ch = keys[w.next];
         }
         return { status: "ok", cmd };
     }
@@ -584,7 +657,7 @@ QtObject {
     function isChange(cmd) {
         if (isVisual)
             return !cmd.motion && !cmd.textObj
-                && !["<Esc>", "v", "V", "o", "O", ":", "/", "?", "y", "Y"].includes(cmd.action);
+                && !["<Esc>", "v", "V", "o", "O", ":", "/", "?", "y", "Y", "q"].includes(cmd.action);
         return cmd.op ? cmd.op !== "y" : changeActions.includes(cmd.action);
     }
 
@@ -610,8 +683,10 @@ QtObject {
     function moveBy(cmd) {
         const t = editor.text;
         const r = motion(t, cursor, cmd.motion, Math.max(cmd.count, 1), cmd.count > 0, false);
-        if (!r)
+        if (!r) {
+            typeahead = [];
             return;
+        }
         let p = r.pos;
         if (isVisual)
             p = r.eol ? Math.min(p, t.length) : clampNormal(t, p);
@@ -634,8 +709,10 @@ QtObject {
             range = { start: lineStart(t, cursor), end: Math.min(le + 1, n), linewise: true };
         } else if (cmd.textObj) {
             range = textObject(t, cursor, cmd.textObj, count);
-            if (!range)
+            if (!range) {
+                typeahead = [];
                 return;
+            }
             target = range.start;
         } else {
             let r;
@@ -652,8 +729,10 @@ QtObject {
             } else {
                 r = motion(t, cursor, cmd.motion, count, cmd.count > 0, true);
             }
-            if (!r)
+            if (!r) {
+                typeahead = [];
                 return;
+            }
             target = r.pos;
             const a = Math.min(cursor, r.pos), b = Math.max(cursor, r.pos);
             if (r.type === "linewise")
@@ -843,6 +922,12 @@ QtObject {
         case "<C-x>":
             addToNumber(cmd.action === "<C-a>" ? count : -count);
             break;
+        case "q":
+            startRecording(cmd.ch);
+            break;
+        case "@":
+            runMacro(cmd.ch, count);
+            break;
         }
     }
 
@@ -883,6 +968,10 @@ QtObject {
         }
         if (a === ":" || a === "/" || a === "?") {
             openCommandLine(a);
+            return;
+        }
+        if (a === "q") {
+            startRecording(cmd.ch);
             return;
         }
 
@@ -1087,6 +1176,77 @@ QtObject {
             leaveInsert();
         }
         replaying = false;
+    }
+
+    // ---- Macros ------------------------------------------------------------
+    // A register holds a macro as text, with keys like Esc written "<Esc>".
+    // A recorded one also keeps its keys, so typed text like "<CR>" stays text.
+
+    function startRecording(reg) {
+        recording = reg;
+        recordKeys = [];
+    }
+
+    function stopRecording() {
+        const reg = recording.toLowerCase();
+        let ks = recordKeys;
+        if (!draining)
+            ks = ks.slice(0, -1); // the "q" that stopped it
+        // "qA" appends to register a.
+        const old = recording !== reg ? registers[reg] : null;
+        if (old)
+            ks = (old.keys || macroKeys(old.text)).concat(ks);
+        registers[reg] = { text: ks.join(""), linewise: false, hidden: [], keys: ks };
+        recording = "";
+        recordKeys = [];
+    }
+
+    // Splits register text into keys.
+    function macroKeys(text) {
+        const named = { "\n": "<CR>", "\r": "<CR>", "\t": "<Tab>", "\x1b": "<Esc>" };
+        const re = /<(?:Esc|CR|BS|Del|Tab|Left|Right|Up|Down|Home|End|PageUp|PageDown|C-[a-z])>|[\s\S]/gu;
+        return (text.match(re) || []).map(k => named[k] || k);
+    }
+
+    function runMacro(reg, count) {
+        if (reg === "@") {
+            if (!lastMacro) {
+                showError("E748: No previously used register");
+                return;
+            }
+            reg = lastMacro;
+        }
+        lastMacro = reg;
+        if (reg === ":") {
+            const list = history[":"];
+            if (!list.length) {
+                showError("E30: No previous command line");
+                return;
+            }
+            for (let i = 0; i < count; i++)
+                runEx(list[list.length - 1].trim());
+            return;
+        }
+        const r = getRegister(reg);
+        if (!r)
+            return;
+        const ks = r.keys || macroKeys(r.text);
+        let all = [];
+        for (let i = 0; i < count; i++)
+            all = all.concat(ks);
+        // A macro run from a macro goes before the rest of that one.
+        typeahead = all.concat(typeahead);
+        if (draining)
+            return;
+        draining = true;
+        for (let n = 0; typeahead.length; n++) {
+            if (n === maxMacroKeys) {
+                showError("Macro stopped after " + n + " keys");
+                break;
+            }
+            runKey(typeahead.shift(), null);
+        }
+        draining = false;
     }
 
     // ---- Editing primitives ----------------------------------------------
@@ -1550,8 +1710,10 @@ QtObject {
         do
             m = re.exec(line);
         while (m && ls + m.index + m[0].length <= cursor);
-        if (!m)
+        if (!m) {
+            typeahead = [];
             return;
+        }
         const s = m[0];
         let text;
         if (/^0[xXbB]/.test(s)) {

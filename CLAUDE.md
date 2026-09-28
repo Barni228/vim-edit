@@ -63,6 +63,12 @@ VimEdit: a plain-text editor in Rust + Qt 6 via cxx-qt 0.10, with the UI in QML.
   doesn't open the accent picker on held keys and only vim edits the text. Vim keeps its
   own undo stack (diffs per change), so native undo (Cmd+Z) is routed to it. Only the
   `"+`/`"*` registers use the system clipboard, via `Document.clipboardText()`.
+- **Macros**: typed keys are recorded as tokens (`"<Esc>"`, `"x"`); the register
+  keeps them as `keys` next to the text, so literal "<CR>" typed in insert mode
+  stays text. `@` puts the keys in `typeahead`, which `runMacro` runs through
+  `runKey` with no key event, so vim types insert-mode keys itself (`typeKey`,
+  `insertMove`). A failing command (bad keys, failed motion, `showError`)
+  empties `typeahead`, and a run stops after `maxMacroKeys` keys.
 - **Hidden text** (Cmd+J): the document holds a plain 💩, and `Vim.hidden` keeps
   the text beside it as `{ at, item }` entries. Vim's edits shift the entries in
   `replaceRange` (pass the entries of inserted text), editor-made edits (insert

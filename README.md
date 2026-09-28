@@ -14,6 +14,9 @@ The editor starts in normal mode. It supports the common vim commands:
   `i{ a{ ip ap` and so on), plus `x X s S C D Y p P J r ~ u Ctrl-R .`
 - Registers: yanks and deletes stay inside the editor. Use `"+` or `"*` for the
   system clipboard, and `"a`–`"z` for named registers.
+- Macros: `q{a-z}` records, `q` stops (`qA` appends), `@{a-z}` runs, `@@` runs
+  the last one again and `@:` repeats the last `:` command. A macro stops at the
+  first command that fails, so recursive macros end on their own.
 - `/`, `?`, `:w`, `:q`, `:q!`, `:wq`, `:x`, `:<line>`, `ZZ`, `ZQ`. Up and Down on
   the command line go through earlier commands or searches that start with what
   you've typed.
