@@ -11,6 +11,13 @@ The editor starts in normal mode. It supports the common vim commands:
 - Visual block (`Ctrl-V`): `I`, `A` and `c` type on every line of the block at
   once, `$A` appends to every line, and `d y p x r ~ u U o O` work on the block.
   A yanked block pastes as a block. In insert mode Ctrl-V still pastes.
+- Multiple cursors: Alt-click (Option-click on macOS) adds a cursor, or removes
+  one. In insert mode, typing, Backspace, Delete, Enter, paste and the arrow keys
+  work at every cursor, and Esc goes back to one cursor. In normal mode motions,
+  operators and edits (`w`, `dw`, `x`, `r`, `R`, `Ctrl-A`, `p`, `.`, `i`, `o` and so
+  on) happen at every cursor, as one undo step. Each cursor has its own
+  registers, so `yyp` copies every cursor's line. Esc or a plain click removes
+  them. The status line shows MULTI CURSOR while there's more than one.
 - Motions: `h j k l w b e ge W B E 0 ^ $ gg G f t F T ; , % { } H M L n N * #`,
   `Ctrl-D/U/F/B`, all with counts.
 - Operators `d c y > < g~ gu gU` with motions and text objects (`iw aw i" a" i( a(`

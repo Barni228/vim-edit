@@ -72,13 +72,21 @@ VimEdit: a plain-text editor in Rust + Qt 6 via cxx-qt 0.10, with the UI in QML.
 - **Visual block** (`visualBlock`): the editor's selection can't be a block, so
   it's cleared and `main.qml` draws `vim.blockSpans()`. Columns count characters,
   and `wantCol === Infinity` (after `$`) makes the block reach every line end.
-  `I`/`A`/`c` start a `blockInsert`: after each edit (`Qt.callLater` from
-  `onTextChanged`), `mirrorBlock` copies the text typed on the first line to the
-  other lines, which are kept as line numbers plus offsets since the lines above
-  them change. It also sets `blockCursors`, where `main.qml` draws a bar for
-  each other line (blinking with the real one via `editor.blinkOn`). Ctrl+V is
-  Paste on Windows, so `handleKey` lets it through as
-  `<C-v>` outside insert mode; in insert mode it pastes on every OS.
+  `I`/`A`/`c` put an extra cursor on each other line (see below); `blockHome`
+  makes Esc remove them and go back to the start. Ctrl+V is Paste on Windows,
+  so `handleKey` lets it through as `<C-v>` outside insert mode; in insert mode
+  it pastes on every OS.
+- **Multiple cursors**: `vim.cursors` holds the extra ones (Alt+click via a
+  `MouseArea` over the editor, which passes plain clicks through). The editor
+  knows one cursor, so with extras vim handles insert-mode typing and arrows
+  itself: `editAll` runs an edit at every cursor from last to first, and
+  `replaceRange` (or `trackEdit`, for the editor's own edits) moves the cursors
+  after each edit. Leaving insert mode removes them. In normal mode `moveBy`
+  moves them too (`moveCursors`; each keeps its own `col` for j/k, and
+  `motion(..., quiet)` doesn't scroll), and `execute` runs operators and
+  `everyCursorActions` once per cursor (`atEveryCursor`), swapping in each
+  extra cursor's own `registers`. `main.qml` draws them: bars in insert mode,
+  blocks otherwise, blinking with the real bar via `editor.blinkOn`.
 - **Hidden text** (Cmd+J): the document holds a plain 💩, and `Vim.hidden` keeps
   the text beside it as `{ at, item }` entries. Vim's edits shift the entries in
   `replaceRange` (pass the entries of inserted text), editor-made edits (insert

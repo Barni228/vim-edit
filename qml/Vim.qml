@@ -39,7 +39,8 @@ QtObject {
             visual: "-- VISUAL --",
             visualLine: "-- VISUAL LINE --",
             visualBlock: "-- VISUAL BLOCK --"
-        })[mode] || "", recording ? "recording @" + recording : ""].filter(s => s).join(" ")
+        })[mode] || "", cursors.length ? "MULTI CURSOR" : "", recording ? "recording @" + recording : ""]
+        .filter(s => s).join(" ")
 
     signal writeRequested(bool quit)
     signal quitRequested(bool force)
@@ -57,6 +58,10 @@ QtObject {
         "ZZ", "ZQ", "zz", "zt", "zb", "gv", "gh", "<C-a>", "<C-x>", "q", "@", "<C-v>", "<Esc>"]
     readonly property var visualActions: ["<Esc>", "v", "V", "<C-v>", "o", "O", "x", "<Del>", "X", "D", "s",
         "C", "S", "R", "Y", "~", "u", "U", "r", "J", "gJ", "p", "P", ":", "/", "?", "q", "I", "A"]
+    // Normal-mode commands that run at every cursor (as do operators and
+    // motions). "." does too, through the command it repeats.
+    readonly property var everyCursorActions: ["i", "a", "I", "A", "gI", "o", "O", "x", "<Del>", "X", "s",
+        "S", "C", "D", "Y", "p", "P", "J", "gJ", "~", "r", "R", "<C-a>", "<C-x>"]
     readonly property var visualModes: ({ "v": "visual", "V": "visualLine", "<C-v>": "visualBlock" })
     // Normal-mode commands that modify the text (and so can be repeated with ".").
     readonly property var changeActions: ["i", "a", "I", "A", "gI", "o", "O", "x", "<Del>", "X", "s", "S",
@@ -75,11 +80,19 @@ QtObject {
     property var lastVisual: null
     property var dot: null
     property var insertSession: null
-    // An insert started from a visual block: what's typed on the first line
-    // is copied to the other lines as it's typed.
-    property var blockInsert: null
-    // Where the other lines' cursors are during a block insert, for drawing.
-    property var blockCursors: []
+    // Extra cursors (Alt+click, or one per line of a block insert), sorted:
+    // { pos, col, registers, replaceStack }, where col is its wantCol,
+    // registers its own (see atEveryCursor) and replaceStack what it
+    // replaced in replace mode. Commands work at all of them, and leaving
+    // insert or replace mode removes them. Edits move them (see
+    // replaceRange). Replaced, never changed in place, so the view sees
+    // every change.
+    property var cursors: []
+    // While editAll runs: every cursor, the main one too, for edits to move.
+    property var shifting: null
+    // During a block insert: where it started ({ line, offset, moved }), to go
+    // back to after it unless the cursors moved.
+    property var blockHome: null
     property var replaceStack: []
     property bool syncing: false
     property bool replaying: false
@@ -121,8 +134,8 @@ QtObject {
         change = null;
         hidden = [];
         insertSession = null;
-        blockInsert = null;
-        blockCursors = [];
+        cursors = [];
+        blockHome = null;
         setMode("normal");
         setCursor(0);
     }
@@ -166,7 +179,12 @@ QtObject {
             // Ctrl+V pastes too, also on macOS (where Paste is Cmd+V).
             if (event.matches(StandardKey.Paste) || tokenFor(event) === "<C-v>") {
                 const r = getRegister("+");
-                if (r) {
+                if (r && cursors.length) {
+                    setCursor(editAll(p => {
+                        replaceRange(p, p, r.text, r.hidden);
+                        return p + r.text.length;
+                    }));
+                } else if (r) {
                     replaceRange(s, e, r.text, r.hidden);
                     setCursor(s + r.text.length);
                 }
@@ -241,8 +259,6 @@ QtObject {
         const p = editor.cursorPosition;
         if (mode === "insert" || mode === "replace") {
             cursor = p;
-            if (blockInsert)
-                Qt.callLater(mirrorBlock); // moves the other cursors too
             return;
         }
         keys = [];
@@ -354,8 +370,9 @@ QtObject {
             breakInsert();
         else if (s && !s.broken && typed)
             s.keys.push(tok);
-        // A macro has no event for the editor to handle, so vim does it.
-        if (!event) {
+        // A macro has no event for the editor to handle, and the editor
+        // knows only one cursor, so vim does it.
+        if (!event || cursors.length && (move || typed)) {
             if (move)
                 insertMove(tok);
             else if (typed)
@@ -371,9 +388,12 @@ QtObject {
         return false;
     }
 
-    // Moves the insert-mode cursor like the editor does for these keys.
+    // Moves the insert-mode cursors like the editor does for these keys.
     function insertMove(tok) {
-        const t = editor.text, p = cursor;
+        setCursor(editAll(p => insertMoved(editor.text, p, tok)));
+    }
+
+    function insertMoved(t, p, tok) {
         let q = p;
         if (tok === "<Left>") {
             q = p > 0 ? charStart(t, p - 1) : p;
@@ -392,7 +412,7 @@ QtObject {
                 q = advance(t, ls, col, lineEnd(t, ls));
             }
         }
-        setCursor(q);
+        return q;
     }
 
     function openCommandLine(kind) {
@@ -681,10 +701,14 @@ QtObject {
         }
         if (isVisual)
             executeVisual(cmd);
+        else if (cmd.op && cursors.length)
+            atEveryCursor(() => executeOperator(cmd));
         else if (cmd.op)
             executeOperator(cmd);
         else if (cmd.motion)
-            moveBy(cmd);
+            moveBy(cmd); // moves the extra cursors itself
+        else if (cursors.length && everyCursorActions.includes(cmd.action))
+            atEveryCursor(() => executeAction(cmd));
         else
             executeAction(cmd);
         if (changing && mode !== "insert" && mode !== "replace")
@@ -693,19 +717,41 @@ QtObject {
 
     function moveBy(cmd) {
         const t = editor.text;
-        const r = motion(t, cursor, cmd.motion, Math.max(cmd.count, 1), cmd.count > 0, false);
-        if (!r) {
+        const count = Math.max(cmd.count, 1);
+        const r = motion(t, cursor, cmd.motion, count, cmd.count > 0, false);
+        if (r) {
+            let p = r.pos;
+            if (isVisual)
+                p = r.eol ? Math.min(p, t.length) : clampNormal(t, p);
+            else
+                p = clampNormal(t, p);
+            if (!r.keepCol)
+                wantCol = r.eol ? Infinity : column(t, p);
+            setCursor(p);
+        } else {
             typeahead = [];
-            return;
         }
-        let p = r.pos;
-        if (isVisual)
-            p = r.eol ? Math.min(p, t.length) : clampNormal(t, p);
-        else
-            p = clampNormal(t, p);
-        if (!r.keepCol)
-            wantCol = r.eol ? Infinity : column(t, p);
-        setCursor(p);
+        if (cursors.length && mode === "normal")
+            moveCursors(t, cmd.motion, count, cmd.count > 0);
+    }
+
+    // Moves the extra cursors as the main one moved. Each keeps its own
+    // column for j and k (`col`, like wantCol).
+    function moveCursors(t, m, count, explicit) {
+        // "*" and "#" search for the main cursor's word, which is now the
+        // last search, from every cursor.
+        if (m.name === "*" || m.name === "#")
+            m = { name: "n" };
+        const mainCol = wantCol;
+        setCursors(cursors.map(c => {
+            wantCol = c.col === undefined ? column(t, c.pos) : c.col;
+            const r = motion(t, c.pos, m, count, explicit, false, true);
+            if (!r)
+                return Object.assign({}, c, { col: wantCol });
+            const p = clampNormal(t, r.pos);
+            return Object.assign({}, c, { pos: p, col: r.keepCol ? wantCol : r.eol ? Infinity : column(t, p) });
+        }));
+        wantCol = mainCol;
     }
 
     function executeOperator(cmd) {
@@ -918,6 +964,7 @@ QtObject {
             break;
         case "<Esc>":
             highlightPattern = "";
+            cursors = [];
             break;
         case "gv":
             if (lastVisual) {
@@ -1103,7 +1150,8 @@ QtObject {
     // Moving around in insert mode ends the repeatable part of the insert and
     // starts a new undo step, like in vim.
     function breakInsert() {
-        endBlockInsert();
+        if (blockHome)
+            blockHome.moved = true;
         const s = insertSession;
         if (s && !s.broken) {
             if (s.dot)
@@ -1115,15 +1163,15 @@ QtObject {
     }
 
     function leaveInsert() {
-        // After a block insert, the cursor goes back to where it started.
-        const home = endBlockInsert();
         const s = insertSession;
         if (s && !s.broken) {
             for (let i = 1; i < s.count; i++) {
                 if (s.openLine) {
-                    const le = lineEnd(editor.text, cursor);
-                    replaceRange(le, le, "\n");
-                    setCursor(le + 1);
+                    setCursor(editAll(q => {
+                        const le = lineEnd(editor.text, q);
+                        replaceRange(le, le, "\n");
+                        return le + 1;
+                    }));
                 }
                 for (const k of s.keys)
                     typeKey(k);
@@ -1133,64 +1181,81 @@ QtObject {
         }
         insertSession = null;
         replaceStack = [];
+        // Back to one cursor. After a block insert it goes back to where the
+        // insert started (unless the cursors moved), otherwise it steps back
+        // onto what was typed, as in vim.
+        const block = blockHome;
+        clearCursors();
         const t = editor.text;
-        const p = home >= 0 ? home : cursor > lineStart(t, cursor) ? charStart(t, cursor - 1) : cursor;
+        const p = block && !block.moved ? lineToPos(t, block.line) + block.offset
+            : cursor > lineStart(t, cursor) ? charStart(t, cursor - 1) : cursor;
         setMode("normal");
         commitChange();
         setCursor(clampNormal(t, p));
         wantCol = column(t, cursor);
     }
 
-    // Types a recorded insert-mode key (used by "." and counts).
+    // Types an insert-mode key at every cursor (for extra cursors, macros,
+    // "." and counts; otherwise the editor does it).
     function typeKey(tok) {
         if (mode === "replace") {
             replaceKey(tok);
             return;
         }
-        const p = cursor;
-        if (tok === "<BS>") {
-            if (p > 0) {
+        setCursor(editAll(p => {
+            if (tok === "<BS>") {
+                if (p === 0)
+                    return p;
                 const q = charStart(editor.text, p - 1);
                 replaceRange(q, p, "");
-                setCursor(q);
+                return q;
             }
-        } else if (tok === "<Del>") {
-            if (p < editor.length)
-                replaceRange(p, charEnd(editor.text, p), "");
-        } else {
+            if (tok === "<Del>") {
+                if (p < editor.length)
+                    replaceRange(p, charEnd(editor.text, p), "");
+                return p;
+            }
             const s = tok === "<CR>" ? "\n" : tok === "<Tab>" ? "\t" : tok;
             replaceRange(p, p, s);
-            setCursor(p + s.length);
-        }
+            return p + s.length;
+        }));
     }
 
+    // Types a replace-mode key at every cursor. Each cursor keeps what it
+    // replaced (the main one in replaceStack), for Backspace to put back.
     function replaceKey(tok) {
-        const p = cursor;
+        setCursor(editAll((p, c) => {
+            if (!c.main && !c.replaceStack)
+                c.replaceStack = [];
+            return replaceAt(p, c.main ? replaceStack : c.replaceStack, tok);
+        }));
+    }
+
+    function replaceAt(p, stack, tok) {
         if (tok === "<BS>") {
             const q = charStart(editor.text, p - 1);
-            if (replaceStack.length) {
-                const orig = replaceStack.pop();
+            if (stack.length) {
+                const orig = stack.pop();
                 replaceRange(q, p, orig ? orig.text : "", orig ? orig.hidden : []);
-                setCursor(q);
-            } else if (p > lineStart(editor.text, p)) {
-                setCursor(q);
+                return q;
             }
-            return;
+            return p > lineStart(editor.text, p) ? q : p;
         }
         const s = tok === "<CR>" ? "\n" : tok === "<Tab>" ? "\t" : tok;
         for (const ch of s) {
-            const q = cursor, t = editor.text;
+            const t = editor.text;
             // A line break is inserted without replacing anything.
-            if (ch !== "\n" && q < t.length && t[q] !== "\n") {
-                const e = charEnd(t, q);
-                replaceStack.push({ text: t.slice(q, e), hidden: hiddenIn(hidden, q, e) });
-                replaceRange(q, e, ch);
+            if (ch !== "\n" && p < t.length && t[p] !== "\n") {
+                const e = charEnd(t, p);
+                stack.push({ text: t.slice(p, e), hidden: hiddenIn(hidden, p, e) });
+                replaceRange(p, e, ch);
             } else {
-                replaceStack.push(null);
-                replaceRange(q, q, ch);
+                stack.push(null);
+                replaceRange(p, p, ch);
             }
-            setCursor(q + ch.length);
+            p += ch.length;
         }
+        return p;
     }
 
     function repeatDot(count) {
@@ -1397,66 +1462,105 @@ QtObject {
         });
     }
 
-    // Starts insert mode at the first of `points` ({ line, offset, pad }, top
-    // to bottom: offset is from the line's start, pad goes before the text),
-    // copying what's typed there to the others.
+    // Starts insert mode with a cursor at each of `points` ({ line, offset,
+    // pad }, top to bottom: offset is from the line's start, and the spaces
+    // in pad are added there first, to line the cursors up), the first being
+    // the main one.
     function startBlockInsert(points) {
-        const first = points[0];
-        let t = editor.text;
-        const ls = lineToPos(t, first.line);
-        let p = ls + first.offset;
-        if (first.pad) {
-            replaceRange(p, p, first.pad);
-            p += first.pad.length;
-            t = editor.text;
-        }
-        startInsert(1, p, null);
-        insertSession.dot = null;
-        blockInsert = { line: first.line, before: t.slice(ls, p), after: t.slice(p, lineEnd(t, p)), typed: "",
-            targets: points.slice(1) };
-        mirrorBlock();
-    }
-
-    // Copies what's been typed on the block insert's first line to the other
-    // lines and puts their cursors where the first line's is. Returns false
-    // if the line changed in some other way (a line break was typed, say),
-    // and then copies nothing and shows no other cursors.
-    function mirrorBlock() {
-        const b = blockInsert;
-        if (!b)
-            return false;
-        const t = editor.text;
-        const ls = lineToPos(t, b.line), le = lineEnd(t, ls);
-        const at = ls + b.before.length, end = le - b.after.length;
-        if (end < at || t.slice(ls, at) !== b.before || t.slice(end, le) !== b.after) {
-            blockCursors = [];
-            return false;
-        }
-        const typed = t.slice(at, end);
-        if (typed !== b.typed) {
-            for (let i = b.targets.length - 1; i >= 0; i--) {
-                const g = b.targets[i];
-                const p = lineToPos(editor.text, g.line) + g.offset;
-                replaceRange(p, p + (b.typed ? g.pad.length + b.typed.length : 0), typed ? g.pad + typed : "");
+        for (const q of points) {
+            if (q.pad) {
+                const at = lineToPos(editor.text, q.line) + q.offset;
+                replaceRange(at, at, q.pad);
             }
-            b.typed = typed;
         }
-        const nt = editor.text;
-        const k = Math.max(0, Math.min(cursor - at, typed.length));
-        blockCursors = b.targets.map(g => lineToPos(nt, g.line) + g.offset + (typed ? g.pad.length : 0) + k);
-        return true;
+        const t = editor.text;
+        const at = points.map(q => lineToPos(t, q.line) + q.offset + q.pad.length);
+        startInsert(1, at[0], null);
+        insertSession.dot = null;
+        setCursors(at.slice(1).map(p => ({ pos: p })));
+        blockHome = { line: points[0].line, offset: points[0].offset + points[0].pad.length };
     }
 
-    // Ends a block insert. Returns where its text starts on the first line,
-    // or -1.
-    function endBlockInsert() {
-        const b = blockInsert;
-        if (!b)
-            return -1;
-        const ok = mirrorBlock();
-        blockInsert = null;
-        blockCursors = [];
-        return ok ? lineToPos(editor.text, b.line) + b.before.length : -1;
+    // ---- Multiple cursors --------------------------------------------------
+
+    // Sets the extra cursors, sorted and without doubles or one at `main`
+    // (the main cursor, unless given).
+    function setCursors(list, main) {
+        if (main === undefined)
+            main = cursor;
+        const sorted = list.slice().sort((a, b) => a.pos - b.pos);
+        cursors = sorted.filter((c, i) => c.pos !== main && (i === 0 || c.pos !== sorted[i - 1].pos));
+        if (cursors.length)
+            trackedText = editor.text;
+    }
+
+    // Alt+click: adds a cursor at pos, or removes the one there.
+    function toggleCursor(pos) {
+        if (isVisual) {
+            setMode("normal");
+            setCursor(clampNormal(editor.text, cursor));
+        }
+        if (mode !== "normal" && mode !== "insert")
+            return;
+        const t = editor.text;
+        const p = mode === "normal" ? clampNormal(t, pos) : Math.min(pos, t.length);
+        if (cursors.some(c => c.pos === p))
+            setCursors(cursors.filter(c => c.pos !== p));
+        else
+            setCursors(cursors.concat([{ pos: p }]));
+    }
+
+    // Back to one cursor (a plain click, or leaving insert mode).
+    function clearCursors() {
+        cursors = [];
+        blockHome = null;
+    }
+
+    // Runs fn(pos, c) at every cursor, the main one too, from the last to the
+    // first, so that each edit moves only cursors that are done (see
+    // shiftCursors). fn returns the cursor's new position. Updates the extra
+    // cursors and returns the main one's position.
+    function editAll(fn) {
+        const main = { pos: cursor, main: true };
+        const all = [main].concat(cursors.filter(c => c.pos !== cursor).map(c => Object.assign({}, c)));
+        shifting = all;
+        for (const c of all.slice().sort((a, b) => b.pos - a.pos))
+            c.pos = fn(c.pos, c);
+        shifting = null;
+        setCursors(all.filter(c => c !== main), main.pos);
+        return main.pos;
+    }
+
+    // Runs a normal-mode command (fn, which works at `cursor`) at every
+    // cursor, like editAll. Each extra cursor has registers of its own (the
+    // main ones at first), so "yyp" copies every cursor's own line.
+    function atEveryCursor(fn) {
+        const mainRegisters = registers, initial = Object.assign({}, registers);
+        setCursor(editAll((p, c) => {
+            if (!c.main)
+                registers = c.registers || Object.assign({}, initial);
+            setCursor(p);
+            fn();
+            if (!c.main) {
+                c.registers = registers;
+                registers = mainRegisters;
+            }
+            return cursor;
+        }));
+    }
+
+    // Moves the extra cursors for an edit that replaced [start, end) with
+    // `length` characters: the ones after it along, the ones in it to the
+    // same offset in the new text if it's that long (so undo keeps them),
+    // otherwise to its end.
+    function shiftCursors(start, end, length) {
+        const move = q => q >= end ? q + length - (end - start) : Math.min(q, start + length);
+        if (shifting) {
+            for (const c of shifting)
+                c.pos = move(c.pos);
+        } else if (cursors.length) {
+            setCursors(cursors.map(c => Object.assign({}, c, { pos: move(c.pos) })), -1);
+        }
     }
 
     // ---- Macros ------------------------------------------------------------
@@ -1542,10 +1646,11 @@ QtObject {
             editor.insert(start, text);
         editing = false;
         syncing = false;
-        if (hidden.length || entries && entries.length) {
+        if (hidden.length || entries && entries.length)
             shiftHidden(start, end, text.length, entries || []);
+        shiftCursors(start, end, text.length);
+        if (hidden.length || cursors.length)
             trackedText = editor.text;
-        }
     }
 
     function setMode(m) {
@@ -1784,7 +1889,8 @@ QtObject {
     readonly property string poop: "\uD83D\uDCA9"
     // Replaced, never changed in place, so a copy of the reference is a snapshot.
     property var hidden: []
-    // The text `hidden` matches, to diff the editor's own edits against.
+    // The text `hidden` and `cursors` match, to diff the editor's own edits
+    // against.
     property string trackedText: ""
     property bool editing: false
     readonly property Connections editorEdits: Connections {
@@ -1792,8 +1898,6 @@ QtObject {
 
         function onTextChanged() {
             vim.trackEdit();
-            if (vim.blockInsert)
-                Qt.callLater(vim.mirrorBlock);
         }
     }
 
@@ -1824,13 +1928,16 @@ QtObject {
 
     // Edits made by the editor itself, rather than through replaceRange.
     function trackEdit() {
-        if (editing || !hidden.length)
+        if (editing || !hidden.length && !cursors.length)
             return;
         const before = trackedText, after = editor.text;
         trackedText = after;
         const d = diff(before, after, [], []);
-        if (d)
-            shiftHidden(d.start, d.end1, d.end2 - d.start, []);
+        if (d) {
+            if (hidden.length)
+                shiftHidden(d.start, d.end1, d.end2 - d.start, []);
+            shiftCursors(d.start, d.end1, d.end2 - d.start);
+        }
     }
 
     // The span that differs between two texts with their entries: `before`
@@ -2112,9 +2219,10 @@ QtObject {
 
     // ---- Motions -----------------------------------------------------------
     // Each returns { pos, type: "exclusive" | "inclusive" | "linewise" } or
-    // null when the motion fails.
+    // null when the motion fails. `quiet` (for extra cursors) leaves the view
+    // where it is.
 
-    function motion(t, p, m, count, explicit, forOp) {
+    function motion(t, p, m, count, explicit, forOp, quiet) {
         const n = t.length;
         switch (m.name) {
         case "h":
@@ -2278,7 +2386,7 @@ QtObject {
             const half = m.name === "<C-d>" || m.name === "<C-u>";
             const down = ["<C-d>", "<C-f>", "<PageDown>"].includes(m.name);
             const lines = (half ? Math.floor(pageLines / 2) : pageLines - 2) * (down ? 1 : -1);
-            if (!forOp)
+            if (!forOp && !quiet)
                 scrollLines(lines);
             return lineMotion(t, p, lines);
         }

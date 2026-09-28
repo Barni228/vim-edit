@@ -228,8 +228,7 @@ ApplicationWindow {
                 }
             }
 
-            // The bars blink together: the one above and, in a block insert,
-            // the other lines' bars.
+            // The bars blink together: the one above and the extra cursors'.
             Timer {
                 interval: 530
                 repeat: true
@@ -238,20 +237,71 @@ ApplicationWindow {
                 onTriggered: editor.blinkOn = !editor.blinkOn
             }
 
-            // A block insert types on every line: a bar on each of the others.
-            Repeater {
-                model: vim.blockCursors
+            // Alt+click adds a cursor (or removes one). A plain click goes
+            // back to one cursor and then does what it always does.
+            MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.IBeamCursor
+                onPressed: mouse => {
+                    if (mouse.modifiers & Qt.AltModifier) {
+                        editor.forceActiveFocus();
+                        vim.toggleCursor(editor.positionAt(mouse.x, mouse.y));
+                    } else {
+                        vim.clearCursors();
+                        mouse.accepted = false;
+                    }
+                }
+            }
 
-                Rectangle {
-                    required property int modelData
-                    readonly property rect band: editor.bandAt(modelData)
+            // The extra cursors (Alt+click, or a block insert's lines), shaped
+            // like the main one. Like the block cursor below,
+            // they refresh after an edit finishes rather than halfway through.
+            Item {
+                id: extraCursors
 
-                    x: band.x
-                    y: band.y
-                    width: 2
-                    height: band.height
-                    color: editor.color
-                    visible: vim.mode === "insert" && editor.activeFocus && editor.blinkOn
+                property var spots: []
+                readonly property var inputs: [vim.cursors, editor.revision, editor.font,
+                    editor.contentWidth, editor.contentHeight]
+
+                function refresh() {
+                    const t = editor.text;
+                    spots = vim.cursors.map(c => {
+                        const pos = Math.min(c.pos, editor.length);
+                        const ch = t.slice(pos, vim.charEnd(t, pos));
+                        const shown = ch === "\t" || ch === "\n" || ch === " " ? "" : ch;
+                        return { band: editor.bandAt(pos), character: shown,
+                            width: metrics.advanceWidth(shown || " ") };
+                    });
+                }
+
+                onInputsChanged: Qt.callLater(refresh)
+
+                Repeater {
+                    model: extraCursors.spots
+
+                    Rectangle {
+                        required property var modelData
+                        // The main cursor's shape: "bar", "block" or "underline".
+                        readonly property string shape: vim.cursorShape
+                        readonly property rect band: modelData.band
+
+                        x: band.x
+                        y: shape === "underline" ? band.y + band.height - height : band.y
+                        width: shape === "bar" ? 2 : modelData.width
+                        height: shape === "underline" ? Math.max(2, Math.round(band.height / 8)) : band.height
+                        color: editor.color
+                        visible: shape !== "bar" || editor.activeFocus && editor.blinkOn
+                        opacity: editor.activeFocus ? 1 : 0.4
+
+                        Text {
+                            y: metrics.ascent - baselineOffset
+                            visible: parent.shape === "block"
+                            text: parent.modelData.character
+                            font: editor.font
+                            color: editor.palette.base
+                            textFormat: Text.PlainText
+                        }
+                    }
                 }
             }
 
