@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Dialogs
+import QtQuick.Effects
 import Qt.labs.platform as Platform
 
 import VimEdit
@@ -100,6 +101,8 @@ ApplicationWindow {
             else
                 vim.showError("E37: No write since last change (add ! to override)");
         }
+        onHoverRequested: at => hover.show(at, false)
+        onCursorChanged: hover.hide()
     }
 
     FontMetrics {
@@ -178,7 +181,24 @@ ApplicationWindow {
             }
             onCursorPositionChanged: vim.syncFromEditor()
             onSelectedTextChanged: vim.syncFromEditor()
-            Keys.onPressed: event => event.accepted = vim.handleKey(event)
+            onRevisionChanged: hover.hide()
+            onActiveFocusChanged: if (!activeFocus) hover.hide()
+            Keys.onPressed: event => {
+                if (event.matches(StandardKey.Copy) && hover.copySelection()) {
+                    event.accepted = true;
+                    return;
+                }
+                // Not on a lone modifier, which may start Cmd+C.
+                if (![Qt.Key_Shift, Qt.Key_Control, Qt.Key_Meta, Qt.Key_Alt, Qt.Key_AltGr].includes(event.key))
+                    hover.hide(); // gh shows it again
+                event.accepted = vim.handleKey(event);
+            }
+
+            // The pointer resting on a hidden-text 💩 shows its text.
+            HoverHandler {
+                onPointChanged: hover.pointerAt(hovered ? point.position : null)
+                onHoveredChanged: hover.pointerAt(hovered ? point.position : null)
+            }
 
             // Insert mode: a blinking bar. The editor puts the delegate at its
             // cursor rectangle; the bar itself fills the text band.
@@ -376,6 +396,193 @@ ApplicationWindow {
                     font: editor.font
                     color: editor.palette.base
                     textFormat: Text.PlainText
+                }
+            }
+        }
+    }
+
+    Connections {
+        target: scrollView.contentItem
+
+        function onContentXChanged() {
+            hover.hide();
+        }
+        function onContentYChanged() {
+            hover.hide();
+        }
+    }
+
+    // The text in a hidden-text 💩, shown like VS Code's hover: after the
+    // pointer rests on the 💩, or on gh. Its text can be selected with the
+    // mouse and copied. Any other key, a scroll or an edit hides it, and one
+    // the pointer opened also hides once the pointer is on neither the 💩
+    // nor the box. It lives in the window's overlay so the editor doesn't
+    // clip it.
+    Item {
+        id: hover
+
+        property int at: -1
+        property bool byMouse: false
+        property string text: ""
+        property rect anchorRect // the 💩, in the overlay's coordinates
+        property int mouseAt: -1 // the 💩 under the pointer
+        readonly property bool dark: editor.palette.base.hslLightness < 0.5
+        readonly property real maxWidth: Math.min(parent ? parent.width - 32 : 600, 640)
+        readonly property real maxHeight: Math.min(parent ? parent.height / 2 : 400, 20 * root.lineHeight)
+        readonly property bool held: mouseAt >= 0 && mouseAt === at || boxHover.hovered || press.active
+
+        function show(pos, mouse) {
+            const h = vim.hiddenAt(pos);
+            if (!h)
+                return;
+            text = vim.revealAll(h.item.text, h.item.hidden).replace(/\n$/, "");
+            const a = editor.bandAt(pos), b = editor.bandAt(pos + vim.poop.length);
+            anchorRect = editor.mapToItem(parent, a.x, a.y, b.x - a.x, a.height);
+            scroller.contentY = 0;
+            byMouse = mouse;
+            at = pos;
+        }
+
+        function hide() {
+            at = -1;
+            label.deselect();
+            delay.stop();
+            grace.stop();
+        }
+
+        // Copies the text selected in the box, if any.
+        function copySelection() {
+            if (at < 0 || label.selectedText === "")
+                return false;
+            label.copy();
+            return true;
+        }
+
+        // The 💩 with hidden text at point p in the editor, or -1.
+        function hiddenUnder(p) {
+            if (!p || !vim.hidden.length)
+                return -1;
+            const t = editor.text, pos = editor.positionAt(p.x, p.y);
+            // positionAt gives the nearest gap, which is after the 💩 on its right half.
+            for (const c of [pos, pos > 0 ? vim.charStart(t, pos - 1) : -1]) {
+                if (c < 0 || !vim.hiddenAt(c))
+                    continue;
+                const a = editor.cellAt(c), b = editor.cellAt(c + vim.poop.length);
+                if (p.x >= a.x && p.x < b.x && p.y >= a.y && p.y < a.y + a.height)
+                    return c;
+            }
+            return -1;
+        }
+
+        function pointerAt(p) {
+            const c = hiddenUnder(p);
+            if (c === mouseAt)
+                return;
+            mouseAt = c;
+            delay.stop();
+            if (c >= 0 && c !== at)
+                delay.restart();
+        }
+
+        parent: Overlay.overlay
+        visible: at >= 0
+        width: frame.width
+        height: frame.height
+        // Above the 💩, or below it when there's no room.
+        x: Math.max(8, Math.min(anchorRect.x, (parent ? parent.width : 0) - width - 8))
+        y: anchorRect.y - height - 4 >= 4 ? anchorRect.y - height - 4 : anchorRect.y + anchorRect.height + 4
+        // A little time to cross the gap between the 💩 and the box.
+        onHeldChanged: {
+            if (held || at < 0 || !byMouse)
+                grace.stop();
+            else
+                grace.restart();
+        }
+
+        Timer {
+            id: delay
+
+            interval: 300
+            onTriggered: hover.show(hover.mouseAt, true)
+        }
+
+        Timer {
+            id: grace
+
+            interval: 300
+            onTriggered: hover.hide()
+        }
+
+        Rectangle {
+            id: frame
+
+            width: scroller.width + 16
+            height: scroller.height + 8
+            radius: 4
+            color: Qt.tint(editor.palette.base, hover.dark ? "#12ffffff" : "#08000000")
+            border.color: Qt.tint(editor.palette.base, hover.dark ? "#40ffffff" : "#30000000")
+            layer.enabled: hover.visible
+            layer.effect: MultiEffect {
+                shadowEnabled: true
+                shadowBlur: 0.6
+                shadowVerticalOffset: 2
+                shadowColor: hover.dark ? "#a0000000" : "#40000000"
+            }
+
+            HoverHandler {
+                id: boxHover
+
+                cursorShape: Qt.IBeamCursor
+            }
+            // Held while a selection is dragged, even outside the box.
+            PointHandler {
+                id: press
+
+                acceptedButtons: Qt.LeftButton
+            }
+
+            // Not interactive, since a drag selects text; the wheel scrolls it.
+            Flickable {
+                id: scroller
+
+                x: 8
+                y: 4
+                // Room beside the text for the scroll bar, when there is one.
+                width: label.width + (contentHeight > height ? bar.width + 4 : 0)
+                height: Math.min(label.height, hover.maxHeight - 8)
+                contentWidth: label.width
+                contentHeight: label.height
+                interactive: false
+                clip: true
+
+                ScrollBar.vertical: ScrollBar {
+                    id: bar
+                }
+
+                WheelHandler {
+                    onWheel: event => {
+                        const dy = event.pixelDelta.y || event.angleDelta.y / 120 * 3 * root.lineHeight;
+                        scroller.contentY = Math.max(0, Math.min(scroller.contentHeight - scroller.height,
+                            scroller.contentY - dy));
+                    }
+                }
+
+                TextEdit {
+                    id: label
+
+                    width: Math.min(implicitWidth, hover.maxWidth - 16)
+                    text: hover.text
+                    font: editor.font
+                    color: editor.color
+                    textFormat: TextEdit.PlainText
+                    wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
+                    readOnly: true
+                    selectByMouse: true
+                    // Keys stay with the editor, which forwards Copy (see copySelection).
+                    activeFocusOnPress: false
+                    persistentSelection: true
+                    selectionColor: editor.palette.highlight
+                    selectedTextColor: editor.palette.highlightedText
                 }
             }
         }

@@ -42,6 +42,8 @@ QtObject {
 
     signal writeRequested(bool quit)
     signal quitRequested(bool force)
+    // gh on a hidden-text 💩: show its text at the 💩 at `at`.
+    signal hoverRequested(int at)
 
     readonly property bool isMac: Qt.platform.os === "osx"
     readonly property var operators: ["d", "c", "y", ">", "<", "g~", "gu", "gU"]
@@ -51,7 +53,7 @@ QtObject {
         "<C-d>", "<C-u>", "<C-f>", "<C-b>", "<PageDown>", "<PageUp>"]
     readonly property var normalActions: ["i", "a", "I", "A", "gI", "o", "O", "v", "V", "x", "<Del>", "X",
         "s", "S", "C", "D", "Y", "p", "P", "J", "gJ", "u", "<C-r>", ".", "~", "r", "R", ":", "/", "?",
-        "ZZ", "ZQ", "zz", "zt", "zb", "gv", "<Esc>"]
+        "ZZ", "ZQ", "zz", "zt", "zb", "gv", "gh", "<Esc>"]
     readonly property var visualActions: ["<Esc>", "v", "V", "o", "O", "x", "<Del>", "X", "D", "s", "C",
         "S", "R", "Y", "~", "u", "U", "r", "J", "gJ", "p", "P", ":", "/", "?"]
     // Normal-mode commands that modify the text (and so can be repeated with ".").
@@ -829,6 +831,10 @@ QtObject {
                 setMode(lastVisual.mode);
                 setCursor(Math.min(lastVisual.cursor, t.length));
             }
+            break;
+        case "gh":
+            if (hiddenAt(p))
+                hoverRequested(p);
             break;
         }
     }

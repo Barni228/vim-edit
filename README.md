@@ -28,8 +28,9 @@ Select some text and press Cmd+J (Ctrl+J on Windows and Linux) to turn it into a
 The 💩 acts like any other character: you can move over it, select it, delete it,
 yank it and paste it. Copying it to the system clipboard (`"+y` or Cmd+C) gives
 other apps the hidden text, while pasting it back into VimEdit gives the 💩 again.
-Press Cmd+J on a 💩 to reveal its text. Hidden text is never saved: in the file
-it's a plain 💩.
+Press Cmd+J on a 💩 to reveal its text. To peek without revealing it, rest the
+mouse on the 💩, or press `gh` with the cursor on it. Hidden text is never saved:
+in the file it's a plain 💩.
 
 ## Install
 

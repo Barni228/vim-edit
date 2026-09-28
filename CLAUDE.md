@@ -72,6 +72,12 @@ VimEdit: a plain-text editor in Rust + Qt 6 via cxx-qt 0.10, with the UI in QML.
   Backspace deletes one code point, so vim handles Backspace in insert mode, and
   cursor steps go through `charStart`/`charEnd` (never `±1`) so they don't split
   an emoji.
+  Resting the mouse on a 💩 (a `HoverHandler`) or `gh` shows its text in `hover`,
+  a VS Code-style box in the window's `Overlay` (so the editor doesn't clip it).
+  Its text is a read-only `TextEdit` that never takes focus, so keys stay with
+  the editor, which forwards Copy to it. Any other key, a scroll or an edit
+  hides it; one the mouse opened also hides 300 ms after the pointer is on
+  neither the 💩 nor the box (and isn't dragging a selection).
 - **Line height**: emoji come from a taller font and would make their line
   taller, so `fixLineHeight` gives every block a fixed height (a block format,
   reapplied after setting `editor.text`). Qt's selection and `positionToRectangle`
