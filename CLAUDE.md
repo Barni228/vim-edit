@@ -13,6 +13,7 @@ VimEdit: a plain-text editor in Rust + Qt 6 via cxx-qt 0.10, with the UI in QML.
 - `qml/Vim.qml`: the vim emulation (modes, motions, operators, registers, undo, `:` and
   `/` command line). It drives the `TextArea` through `insert`/`remove`/`select`.
 - `qml/FindBar.qml`: the VS Code-style find and replace bar (Cmd+F, Cmd+Option+F).
+- `qml/SettingsWindow.qml`: the Settings window (Cmd+,): font size, line numbers, theme.
 - `scripts/`: `bundle-macos.sh` (makes the `.app`), `package-macos.sh` (makes the `.dmg`),
   `package-windows.ps1` (runs windeployqt, then builds the Inno Setup installer).
 - `packaging/`: `Info.plist` (with `@VERSION@` placeholder), `installer.iss`, and a
@@ -136,6 +137,16 @@ VimEdit: a plain-text editor in Rust + Qt 6 via cxx-qt 0.10, with the UI in QML.
   A `TextArea` attached to a `Flickable` (as in a `ScrollView`) clips its text
   at the padding, so the half space between the gutter and the text is a block
   left margin (`root.textIndent`), where scrolled text still shows.
+- **Settings**: `settings` (a QtCore `Settings` in `main.qml`) holds the
+  saved values; `root.fontSize` (an alias of `vim.fontSize`, for `:set fs`),
+  `root.theme` and `vim.number`/`relativeNumber` are the ones in use, bound to
+  them at startup. The Settings window shows the ones in use and changes both
+  (`changeSetting`). The zoom and `:set fs`/`nu`/`rnu` change only the ones in
+  use, and `keepChange` saves them when `settings.keepChanges` is on (the
+  "Zoom and :set" setting, off by default). The theme sets
+  `Application.styleHints.colorScheme` (Qt 6.8+), which also switches the
+  palette, title bar and menus; "system" unsets it. The window's size follows
+  the zoom, so it isn't resizable.
 - Don't make a QML binding depend on something by reading it as a bare statement
   (`editor.revision;`): the app's QML is compiled ahead of time, which can drop it,
   though `qmltestrunner` keeps it. Use the value, e.g. `TextMetrics.advanceWidth`

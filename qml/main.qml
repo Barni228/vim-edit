@@ -1,3 +1,4 @@
+import QtCore
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Dialogs
@@ -13,7 +14,13 @@ ApplicationWindow {
     property string filePath: ""
     property bool modified: false
     readonly property int defaultFontSize: 16
-    property int fontSize: defaultFontSize
+    readonly property int minFontSize: 6
+    readonly property int maxFontSize: 72
+    // The settings in use: the saved ones, unless changed for this session
+    // (see settings.keepChanges). Vim keeps the font size for :set fs.
+    property alias fontSize: vim.fontSize
+    // "system", "light" or "dark".
+    property string theme: settings.theme
     // Every line is this tall, even one with an emoji (see fixLineFormat).
     // The extra space keeps an emoji clear of the lines around it.
     readonly property int lineHeight: Math.ceil(metrics.lineSpacing * 1.25)
@@ -47,7 +54,7 @@ ApplicationWindow {
     }
 
     function zoom(step) {
-        fontSize = Math.max(6, Math.min(72, fontSize + step));
+        fontSize = Math.max(minFontSize, Math.min(maxFontSize, fontSize + step));
     }
 
     // An emoji comes from a taller font than the editor's, which makes its line
@@ -75,9 +82,70 @@ ApplicationWindow {
         editor.forceActiveFocus();
     }
 
-    function insertSettings() {
-        vim.externalEdit(() => editor.insert(editor.cursorPosition, "Settings"));
-        editor.forceActiveFocus();
+    // Qt 6.8 and later can override the system's light or dark mode, which
+    // also changes the palette, the title bar and the menus.
+    function applyTheme() {
+        Application.styleHints.colorScheme = theme === "light" ? Qt.ColorScheme.Light
+            : theme === "dark" ? Qt.ColorScheme.Dark : Qt.ColorScheme.Unknown;
+    }
+
+    onThemeChanged: applyTheme()
+
+    // The saved settings. The Settings window changes them along with the
+    // ones in use; the zoom and :set nu / rnu change them only with
+    // keepChanges, and otherwise just for this session.
+    Settings {
+        id: settings
+
+        property int fontSize: root.defaultFontSize
+        property string theme: "system"
+        property bool number: false
+        property bool relativeNumber: false
+        property bool keepChanges: false
+
+        // Turning it on saves what's in use, as if it had been on.
+        onKeepChangesChanged: {
+            if (keepChanges)
+                ["fontSize", "number", "relativeNumber"].forEach(name => root.keepChange(name));
+        }
+    }
+
+    // Changes a setting now and saves it (fontSize, theme, number or
+    // relativeNumber).
+    function changeSetting(name, value) {
+        (name in settingOwners ? settingOwners[name] : root)[name] = value;
+        settings[name] = value;
+    }
+
+    // Where the settings in use live, other than in root.
+    readonly property var settingOwners: ({ number: vim, relativeNumber: vim })
+
+    // Saves the setting in use after a zoom or :set, if keepChanges says to.
+    function keepChange(name) {
+        if (settings.keepChanges)
+            settings[name] = (name in settingOwners ? settingOwners[name] : root)[name];
+    }
+
+    onFontSizeChanged: keepChange("fontSize")
+
+    Connections {
+        target: vim
+
+        function onNumberChanged() {
+            root.keepChange("number");
+        }
+        function onRelativeNumberChanged() {
+            root.keepChange("relativeNumber");
+        }
+    }
+
+    SettingsWindow {
+        id: settingsWindow
+
+        app: root
+        vim: vim
+        editor: editor
+        settings: settings
     }
 
     Document {
@@ -104,6 +172,12 @@ ApplicationWindow {
         flickable: scrollView.contentItem
         clipboard: doc
         lineHeight: root.lineHeight
+        number: settings.number
+        relativeNumber: settings.relativeNumber
+        fontSize: settings.fontSize
+        defaultFontSize: root.defaultFontSize
+        minFontSize: root.minFontSize
+        maxFontSize: root.maxFontSize
 
         onWriteRequested: quit => {
             root.save();
@@ -951,7 +1025,7 @@ ApplicationWindow {
                     text: qsTr("Settings…")
                     role: Platform.MenuItem.PreferencesRole
                     shortcut: StandardKey.Preferences
-                    onTriggered: root.insertSettings()
+                    onTriggered: settingsWindow.open()
                 }
                 Platform.MenuItem {
                     text: qsTr("Quit VimEdit")
@@ -1040,7 +1114,7 @@ ApplicationWindow {
                     text: qsTr("Se&ttings")
                     // Preferences and Quit have no Ctrl binding on Windows.
                     shortcut: "Ctrl+,"
-                    onTriggered: root.insertSettings()
+                    onTriggered: settingsWindow.open()
                 }
                 MenuSeparator {}
                 Action {
@@ -1135,6 +1209,7 @@ ApplicationWindow {
         // `focus: true` alone doesn't give it the keyboard.
         editor.forceActiveFocus();
         fixLineFormat();
+        applyTheme();
 
         const startup = doc.startupFile();
         if (startup)

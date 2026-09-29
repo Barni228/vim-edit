@@ -32,6 +32,12 @@ QtObject {
     // :set number and :set relativenumber (the view draws the line numbers).
     property bool number: false
     property bool relativeNumber: false
+    // :set fontsize, in points (the view sets the editor's font), with its
+    // default and range.
+    property int fontSize: 16
+    property int defaultFontSize: 16
+    property int minFontSize: 1
+    property int maxFontSize: 999
 
     readonly property bool isVisual: mode === "visual" || mode === "visualLine" || mode === "visualBlock"
     readonly property string cursorShape: mode === "insert" ? "bar"
@@ -2290,39 +2296,65 @@ QtObject {
             showError("E492: Not an editor command: " + c);
     }
 
-    // The boolean options :set knows: full name, short name, property.
+    // The options :set knows: full name, short name, property, default,
+    // and for a number option its range. fontsize isn't vim's (gvim has
+    // guifont); its short name is vim's for fsync, which VimEdit hasn't.
     readonly property var options: [
-        { name: "number", short: "nu", property: "number" },
-        { name: "relativenumber", short: "rnu", property: "relativeNumber" }
+        { name: "fontsize", short: "fs", property: "fontSize", default: defaultFontSize,
+            min: minFontSize, max: maxFontSize },
+        { name: "number", short: "nu", property: "number", default: false },
+        { name: "relativenumber", short: "rnu", property: "relativeNumber", default: false }
     ]
 
-    // :set with args like "nu", "nonu", "nu!", "invnu", "nu?" or "nu&". No
-    // args lists the options that are on.
+    // An option as :set shows it: "  nu", "nonu" or "  fs=16".
+    function optionLabel(o) {
+        const value = vim[o.property];
+        return typeof value === "number" ? "  " + o.name + "=" + value : (value ? "  " : "no") + o.name;
+    }
+
+    // :set with args like "nu", "nonu", "nu!", "invnu", "nu?" or "nu&", and
+    // for a number option "fs=16" (or "fs:16"), "fs+=2", "fs-=2", "fs^=2"
+    // (multiplies), "fs" or "fs?" (shows it) and "fs&". No args lists the
+    // options that aren't at their default.
     function setOptions(args) {
         const words = args.split(/\s+/).filter(w => w);
         const shown = [];
         if (!words.length)
-            shown.push(...options.filter(o => vim[o.property]).map(o => "  " + o.name));
+            shown.push(...options.filter(o => vim[o.property] !== o.default).map(optionLabel));
         for (const w of words) {
-            const m = /^(no|inv)?([a-z]+)([!?&]?)$/.exec(w);
+            const m = /^(no|inv)?([a-z]+)(?:([!?&])|([-+^]?[=:])(.*))?$/.exec(w);
             const o = m && options.find(o => o.name === m[2] || o.short === m[2]);
             if (!o) {
                 showError("E518: Unknown option: " + w);
                 return;
             }
-            const prefix = m[1] || "", suffix = m[3];
-            if (prefix && suffix) {
+            const prefix = m[1] || "", suffix = m[3] || "", op = m[4] || "";
+            const isNumber = typeof o.default === "number";
+            if (prefix && (suffix || isNumber) || op && !isNumber || isNumber && suffix === "!") {
                 showError("E474: Invalid argument: " + w);
                 return;
             }
-            if (suffix === "?")
-                shown.push((vim[o.property] ? "  " : "no") + o.name);
-            else if (suffix === "&")
-                vim[o.property] = false;
-            else if (suffix === "!" || prefix === "inv")
+            if (suffix === "?" || isNumber && !suffix && !op) {
+                shown.push(optionLabel(o));
+            } else if (suffix === "&") {
+                vim[o.property] = o.default;
+            } else if (op) {
+                if (!/^-?\d+$/.test(m[5])) {
+                    showError("E521: Number required after =: " + w);
+                    return;
+                }
+                const n = parseInt(m[5], 10), value = vim[o.property];
+                const result = op[0] === "+" ? value + n : op[0] === "-" ? value - n : op[0] === "^" ? value * n : n;
+                if (result < o.min || result > o.max) {
+                    showError("E474: Invalid argument: " + w + " (" + o.min + " to " + o.max + ")");
+                    return;
+                }
+                vim[o.property] = result;
+            } else if (suffix === "!" || prefix === "inv") {
                 vim[o.property] = !vim[o.property];
-            else
+            } else {
                 vim[o.property] = prefix !== "no";
+            }
         }
         if (shown.length)
             showMessage(shown.join(" "));
