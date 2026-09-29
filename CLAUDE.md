@@ -112,6 +112,14 @@ VimEdit: a plain-text editor in Rust + Qt 6 via cxx-qt 0.10, with the UI in QML.
   the editor, which forwards Copy to it. Any other key, a scroll or an edit
   hides it; one the mouse opened also hides 300 ms after the pointer is on
   neither the 💩 nor the box (and isn't dragging a selection).
+- **Warnings and errors** (`diagnostics` in `main.qml`): the whole words
+  "warning" and "error", in any case, get a VS Code-style squiggle, found
+  in the visible lines like the search highlights, and their line shows a
+  message four spaces after its end (an error's before a warning's). The
+  `hover` box shows the message (with an icon) as it does a 💩's text:
+  `targetAt` finds either, `targetUnder` also finds the message after the
+  line (the box then points at it), and `gh` asks for whatever is under
+  the cursor.
 - **Find bar**: moving to a match moves vim's cursor to its start
   (`vim.jumpTo`, which leaves visual mode and breaks an insert); it doesn't
   select it. The current match is the one starting at the cursor
@@ -137,10 +145,8 @@ VimEdit: a plain-text editor in Rust + Qt 6 via cxx-qt 0.10, with the UI in QML.
   `gutter` is a child of the `TextArea` (so it scrolls with the text), kept at
   `contentX` and drawn over text scrolled under it. The styles hard-code
   `leftPadding` (7 on macOS, `padding + 4` in Fusion), so the editor keeps the
-  style's value and adds the gutter width to it. Only visible lines get a row.
-  A `TextArea` attached to a `Flickable` (as in a `ScrollView`) clips its text
-  at the padding, so the half space between the gutter and the text is a block
-  left margin (`root.textIndent`), where scrolled text still shows.
+  style's value and adds the gutter width (the digits and two spaces) to it.
+  The gutter has the editor's background color. Only visible lines get a row.
 - **Settings**: `settings` (a QtCore `Settings` in `main.qml`) holds the
   saved values; `root.fontSize` (an alias of `vim.fontSize`, for `:set fs`),
   `root.theme` and `vim.number`/`relativeNumber` are the ones in use, bound to

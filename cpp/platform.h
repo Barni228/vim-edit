@@ -27,6 +27,4 @@ void setClipboardText(const QString& text, const QString& data);
 // lines inherit it, but setting the TextEdit's text resets it. The bottom
 // margin adds to each line's height; Qt puts a fixed-height line's baseline
 // at 4/5 of it, and the margin lets the text sit higher in the whole line.
-// The left margin moves the text right; unlike the TextEdit's padding, text
-// scrolled sideways isn't clipped there.
-void setLineFormat(QObject* textDocument, double height, double bottomMargin, double leftMargin);
+void setLineFormat(QObject* textDocument, double height, double bottomMargin);

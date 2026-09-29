@@ -53,7 +53,8 @@ QtObject {
 
     signal writeRequested(bool quit)
     signal quitRequested(bool force)
-    // gh on a hidden-text 💩: show its text at the 💩 at `at`.
+    // gh: show what's under the cursor at `at` (a hidden-text 💩's text, or
+    // a warning or error), if anything.
     signal hoverRequested(int at)
     // Esc in normal mode, or :noh: search highlights should go.
     signal highlightsCleared()
@@ -1023,8 +1024,7 @@ QtObject {
             }
             break;
         case "gh":
-            if (hiddenAt(p))
-                hoverRequested(p);
+            hoverRequested(p);
             break;
         case "<C-a>":
         case "<C-x>":
@@ -3201,7 +3201,7 @@ QtObject {
             f.contentY = top <= editor.topPadding ? 0 : top;
         else if (top + lineHeight > f.contentY + f.height)
             f.contentY = Math.min(maxY, top + lineHeight - f.height);
-        // The left edge is the padding (see keepCursorClear in main.qml).
+        // The left edge is the padding, where the line numbers are.
         const maxX = Math.max(0, f.contentWidth - f.width);
         if (r.x < f.contentX + editor.leftPadding)
             f.contentX = Math.max(0, r.x - editor.leftPadding);

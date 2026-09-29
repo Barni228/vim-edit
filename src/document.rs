@@ -51,14 +51,13 @@ pub mod qobject {
         fn set_clipboard_text(self: &Document, text: &QString, data: &QString);
 
         /// Gives every line of a TextEdit's `textDocument` the same height,
-        /// plus margins below it and on its left.
+        /// plus a margin below it.
         #[qinvokable]
         unsafe fn set_line_format(
             self: &Document,
             text_document: *mut QObject,
             height: f64,
             bottom_margin: f64,
-            left_margin: f64,
         );
     }
 
@@ -128,10 +127,7 @@ impl qobject::Document {
         text_document: *mut qobject::QObject,
         height: f64,
         bottom_margin: f64,
-        left_margin: f64,
     ) {
-        unsafe {
-            platform::ffi::set_line_format(text_document.cast(), height, bottom_margin, left_margin)
-        };
+        unsafe { platform::ffi::set_line_format(text_document.cast(), height, bottom_margin) };
     }
 }

@@ -138,6 +138,16 @@ Popup {
             ]
         },
         {
+            title: "Warnings and errors",
+            tags: ["warning", "warnings", "error", "errors", "diagnostics", "squiggle"],
+            rows: [
+                ["", "The words `warning` and `error` (in any case) get a wavy underline, orange or red, "
+                    + "and a message after the end of their line, as in VS Code."],
+                ["gh", "Show the message of the warning or error under the cursor (so does resting the "
+                    + "mouse on it, or on the message)."]
+            ]
+        },
+        {
             title: "Other keys",
             tags: ["keys", "other", "ctrl-a", "ctrl-x", "g?", "rot13", "ctrl-e", "ctrl-y", "scroll", "zoom",
                 "settings", "undo", "gv", "zz"],

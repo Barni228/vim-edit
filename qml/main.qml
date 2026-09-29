@@ -5,6 +5,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Dialogs
 import QtQuick.Effects
+import QtQuick.Shapes
 import Qt.labs.platform as Platform
 
 import VimEdit
@@ -29,9 +30,6 @@ ApplicationWindow {
     // Where the baseline is in a line: the font's characters sit in the
     // middle of it (see fixLineFormat).
     readonly property real textBaseline: (lineHeight + metrics.ascent - metrics.descent) / 2
-    // With line numbers, the text starts this far after the editor's left
-    // padding (see fixLineFormat).
-    readonly property real textIndent: gutter.shown ? digitMetrics.advanceWidth / 2 : 0
 
     width: 900
     height: 650
@@ -62,22 +60,19 @@ ApplicationWindow {
     // An emoji comes from a taller font than the editor's, which makes its line
     // taller. Give every line the same height instead. Qt puts a fixed-height
     // line's baseline at 4/5 of it, so to center the text, the line is made
-    // shorter and a bottom margin makes up the rest. A left margin makes the
-    // textIndent: the editor clips text scrolled sideways at its padding, but
-    // not at the margin, so it shows between the line numbers and the text.
-    // The block format that does all this counts as an edit, but isn't one.
+    // shorter and a bottom margin makes up the rest. The block format that
+    // does this counts as an edit, but isn't one.
     function fixLineFormat() {
         const wasModified = modified;
         // Not textBaseline, which may not have caught up with the font yet.
         const baseline = (lineHeight + metrics.ascent - metrics.descent) / 2;
         const height = Math.min(lineHeight, baseline * 5 / 4);
-        doc.setLineFormat(editor.textDocument, height, lineHeight - height, textIndent);
+        doc.setLineFormat(editor.textDocument, height, lineHeight - height);
         modified = wasModified;
     }
 
     onLineHeightChanged: fixLineFormat()
     onTextBaselineChanged: fixLineFormat()
-    onTextIndentChanged: fixLineFormat()
 
     function toggleHidden() {
         vim.toggleHidden();
@@ -293,11 +288,10 @@ ApplicationWindow {
             onRevisionChanged: hover.hide()
             onActiveFocusChanged: if (!activeFocus)
                 hover.hide()
-            // Make room for the line numbers beside the style's padding (less
-            // the textIndent, which the block format adds).
+            // Make room for the line numbers beside the style's padding.
             Component.onCompleted: {
                 const base = leftPadding;
-                leftPadding = Qt.binding(() => base + gutter.columnWidth - root.textIndent);
+                leftPadding = Qt.binding(() => base + gutter.columnWidth);
             }
             Keys.onPressed: event => {
                 if (event.matches(StandardKey.Copy) && hover.copySelection()) {
@@ -310,7 +304,8 @@ ApplicationWindow {
                 event.accepted = vim.handleKey(event);
             }
 
-            // The pointer resting on a hidden-text 💩 shows its text.
+            // The pointer resting on a hidden-text 💩 shows its text, and on a
+            // warning or error (or its message after the line) the message.
             HoverHandler {
                 onPointChanged: hover.pointerAt(hovered ? point.position : null)
                 onHoveredChanged: hover.pointerAt(hovered ? point.position : null)
@@ -523,6 +518,150 @@ ApplicationWindow {
                 }
             }
 
+            // Warnings and errors, as in VS Code: the whole words "warning"
+            // and "error" (in any case) get a wavy underline, orange or red,
+            // and their line shows a message after its end (an error's, if
+            // there's one). The pointer resting on either (or gh) shows the
+            // message in `hover`. Drawn for the visible lines, like the
+            // highlights.
+            Item {
+                id: diagnostics
+
+                readonly property int longest: 7 // "warning"
+                readonly property real zoom: root.fontSize / root.defaultFontSize
+                readonly property bool dark: editor.palette.base.hslLightness < 0.5
+                property var spans: []
+                // The one shown after each line's end, with that lineEnd.
+                property var messages: []
+                readonly property var inputs: [editor.revision, scrollView.contentItem.contentY, scrollView.contentItem.height, editor.contentWidth, editor.contentHeight, editor.leftPadding]
+
+                // The warnings and errors within t from `from` to `to`, as
+                // { start, end, severity }.
+                function find(t, from, to) {
+                    const re = /warning|error/gi, part = t.slice(from, to), list = [];
+                    let m;
+                    while ((m = re.exec(part))) {
+                        const s = from + m.index, e = s + m[0].length;
+                        if (vim.charClass(t[s - 1]) !== 2 && vim.charClass(t[e]) !== 2)
+                            list.push({
+                                start: s,
+                                end: e,
+                                severity: m[0].toLowerCase()
+                            });
+                    }
+                    return list;
+                }
+
+                // The warning or error with the character at pos, or null.
+                function at(pos) {
+                    return find(editor.text, Math.max(0, pos - longest + 1), pos + longest).find(d => d.start <= pos && pos < d.end) || null;
+                }
+
+                function message(d) {
+                    const word = "“" + editor.text.slice(d.start, d.end) + "”";
+                    return d.severity === "error" ? word + " is an error." : word + " is a warning.";
+                }
+
+                function color(severity) {
+                    if (severity === "error")
+                        return dark ? "#f14c4c" : "#e51400";
+                    return dark ? "#ff9d3b" : "#e07000";
+                }
+
+                // A zigzag `width` long, `step` high, with a peak every
+                // other step. The last step ends partway at `width`.
+                function wave(width, step) {
+                    let path = "M0 " + step;
+                    for (let x = step, up = true; x - step < width; x += step, up = !up) {
+                        const end = Math.min(x, width), part = (end - x + step) / step;
+                        path += " L" + end + " " + (up ? step * (1 - part) : step * part);
+                    }
+                    return path;
+                }
+
+                function refresh() {
+                    const t = editor.text, f = scrollView.contentItem as Flickable, h = root.lineHeight;
+                    const top = Math.floor((f.contentY - editor.topPadding) / h);
+                    const bottom = Math.ceil((f.contentY + f.height - editor.topPadding) / h);
+                    const last = vim.lineEnd(t, vim.lineToPos(t, Math.max(bottom, 0) + 1));
+                    const found = find(t, vim.lineToPos(t, Math.max(top, 0) + 1), last);
+                    const shown = [];
+                    for (const d of found) {
+                        const lineEnd = vim.lineEnd(t, d.start), prev = shown[shown.length - 1];
+                        if (!prev || prev.lineEnd !== lineEnd)
+                            shown.push(Object.assign({ lineEnd }, d));
+                        else if (prev.severity !== "error" && d.severity === "error")
+                            shown[shown.length - 1] = Object.assign({ lineEnd }, d);
+                    }
+                    // Recompute every rectangle, as for `highlights`.
+                    spans = [];
+                    messages = [];
+                    spans = found;
+                    messages = shown;
+                }
+
+                // The message shown after a line's end at point p, as
+                // { start, rect } (its diagnostic's start), or null.
+                function messageUnder(p) {
+                    for (let i = 0; i < messageRepeater.count; i++) {
+                        const m = messageRepeater.itemAt(i), cell = editor.cellAt(messages[i].lineEnd);
+                        if (m && p.x >= m.x && p.x < m.x + m.width && p.y >= cell.y && p.y < cell.y + cell.height)
+                            return { start: messages[i].start, rect: Qt.rect(m.x, cell.y, m.width, cell.height) };
+                    }
+                    return null;
+                }
+
+                onInputsChanged: Qt.callLater(refresh)
+
+                Repeater {
+                    id: messageRepeater
+
+                    model: diagnostics.messages
+
+                    // Four spaces after the line's end.
+                    Text {
+                        required property var modelData
+                        readonly property rect cell: editor.cellAt(modelData.lineEnd)
+
+                        x: cell.x + 4 * spaceMetrics.advanceWidth
+                        y: cell.y + root.textBaseline - baselineOffset
+                        text: diagnostics.message(modelData)
+                        font: editor.font
+                        color: diagnostics.color(modelData.severity)
+                        textFormat: Text.PlainText
+                    }
+                }
+
+                Repeater {
+                    model: diagnostics.spans
+
+                    // Centered on the bottom of the font's descent.
+                    Shape {
+                        id: squiggle
+
+                        required property var modelData
+                        readonly property rect startRect: editor.cellAt(modelData.start)
+
+                        x: startRect.x
+                        y: startRect.y + root.textBaseline + metrics.descent - height / 2
+                        width: editor.cellAt(modelData.end).x - startRect.x
+                        height: 3 * diagnostics.zoom
+                        preferredRendererType: Shape.CurveRenderer
+
+                        ShapePath {
+                            strokeColor: diagnostics.color(squiggle.modelData.severity)
+                            strokeWidth: diagnostics.zoom
+                            fillColor: "transparent"
+                            joinStyle: ShapePath.RoundJoin
+
+                            PathSvg {
+                                path: diagnostics.wave(squiggle.width, squiggle.height)
+                            }
+                        }
+                    }
+                }
+            }
+
             // Other modes: a block over the character, or an underline in
             // replace mode (R, and r while it waits for the character).
             Rectangle {
@@ -604,11 +743,10 @@ ApplicationWindow {
             }
 
             // Line numbers (:set number / relativenumber) for the visible
-            // lines, on a darker background that fills the left padding and
-            // stops half a space (root.textIndent) before the text. It stays
-            // put when the text scrolls sideways, and covers the text that
-            // scrolls under it. As in vim, with both options the cursor's
-            // line shows its own number, on the left.
+            // lines, in the left padding, two spaces before the text. It
+            // stays put when the text scrolls sideways, and covers the text
+            // that scrolls under it. As in vim, with both options the
+            // cursor's line shows its own number, on the left.
             Rectangle {
                 id: gutter
 
@@ -649,7 +787,7 @@ ApplicationWindow {
                 x: scrollView.contentItem.contentX
                 width: editor.leftPadding
                 height: editor.height
-                color: editor.palette.base
+                color: (editor.background as Rectangle).color
 
                 TextMetrics {
                     id: digitMetrics
@@ -664,7 +802,7 @@ ApplicationWindow {
                     Text {
                         required property var modelData
 
-                        x: editor.leftPadding + root.textIndent - gutter.columnWidth
+                        x: editor.leftPadding - gutter.columnWidth
                         y: editor.topPadding + modelData.line * root.lineHeight + root.textBaseline - baselineOffset
                         width: gutter.digits * digitMetrics.advanceWidth
                         horizontalAlignment: modelData.left ? Text.AlignLeft : Text.AlignRight
@@ -715,63 +853,47 @@ ApplicationWindow {
         }
     }
 
-    // The editor scrolls its cursor into view as far as its padding, but the
-    // text starts root.textIndent later, so keep vim's cursor that far clear
-    // of the line numbers too (e.g. 0 scrolls all the way back). Runs after
-    // the editor's own scrolling. The view snaps to whole pixels, so round
-    // down.
-    function keepCursorClear() {
-        const f = scrollView.contentItem as Flickable;
-        const min = Math.floor(editor.positionToRectangle(Math.min(vim.cursor, editor.length)).x - editor.leftPadding - textIndent);
-        if (f.contentX > min)
-            f.contentX = Math.max(0, min);
-    }
-
-    Connections {
-        target: editor
-
-        function onCursorRectangleChanged() {
-            Qt.callLater(root.keepCursorClear);
-        }
-    }
-
-    Connections {
-        target: vim
-
-        function onCursorChanged() {
-            Qt.callLater(root.keepCursorClear);
-        }
-    }
-
-    // The text in a hidden-text 💩, shown like VS Code's hover: after the
-    // pointer rests on the 💩, or on gh. Its text can be selected with the
-    // mouse and copied. Any other key, a scroll or an edit hides it, and one
-    // the pointer opened also hides once the pointer is on neither the 💩
-    // nor the box. It lives in the window's overlay so the editor doesn't
-    // clip it.
+    // The text in a hidden-text 💩, or a warning's or error's message, shown
+    // like VS Code's hover: after the pointer rests on it (or on the message
+    // after its line), or on gh. Its text can be selected with the mouse and
+    // copied. Any other key, a scroll or an edit hides it, and one the
+    // pointer opened also hides once the pointer is on neither the target
+    // (nor its message) nor the box. It lives in the window's overlay so the
+    // editor doesn't clip it.
     Item {
         id: hover
 
-        property int at: -1
+        property int at: -1 // the start of the target
         property bool byMouse: false
         property string text: ""
-        property rect anchorRect // the 💩, in the overlay's coordinates
-        property int mouseAt: -1 // the 💩 under the pointer
+        property string severity: "" // a diagnostic's: "warning" or "error"
+        property rect anchorRect // what the box points at, in the overlay's coordinates
+        property int mouseAt: -1 // the start of the target under the pointer
+        property rect mouseRect // what's under the pointer: the target or its message
         readonly property bool dark: editor.palette.base.hslLightness < 0.5
         readonly property real maxWidth: Math.min(parent ? parent.width - 32 : 600, 640)
         readonly property real maxHeight: Math.min(parent ? parent.height / 2 : 400, 20 * root.lineHeight)
         readonly property bool held: mouseAt >= 0 && mouseAt === at || boxHover.hovered || press.active
 
-        function show(pos, mouse) {
-            const h = vim.hiddenAt(pos);
-            if (!h)
+        // Shows the target at pos, pointing at `rect` in the editor (the
+        // target itself if not given).
+        function show(pos, mouse, rect) {
+            const target = targetAt(pos);
+            if (!target)
                 return;
-            text = vim.revealAll(h.item.text, h.item.hidden).replace(/\n$/, "");
-            const a = editor.cellAt(pos), b = editor.cellAt(pos + vim.poop.length);
-            anchorRect = editor.mapToItem(parent, a.x, a.y, b.x - a.x, a.height);
+            severity = target.severity;
+            if (severity) {
+                text = diagnostics.message(target);
+            } else {
+                const h = vim.hiddenAt(pos);
+                text = vim.revealAll(h.item.text, h.item.hidden).replace(/\n$/, "");
+            }
+            const a = editor.cellAt(target.start), b = editor.cellAt(target.end);
+            const r = rect || Qt.rect(a.x, a.y, b.x - a.x, a.height);
+            anchorRect = editor.mapToItem(parent, r.x, r.y, r.width, r.height);
             scroller.contentY = 0;
             byMouse = mouse;
-            at = pos;
+            at = target.start;
         }
 
         function hide() {
@@ -789,27 +911,45 @@ ApplicationWindow {
             return true;
         }
 
-        // The 💩 with hidden text at point p in the editor, or -1.
-        function hiddenUnder(p) {
-            if (!p || !vim.hidden.length)
-                return -1;
+        // What there is to show at pos, as { start, end, severity }: the 💩
+        // with hidden text starting there (with no severity), or the warning
+        // or error with the character there. Null if nothing.
+        function targetAt(pos) {
+            if (vim.hiddenAt(pos))
+                return {
+                    start: pos,
+                    end: pos + vim.poop.length,
+                    severity: ""
+                };
+            return diagnostics.at(pos);
+        }
+
+        // The target at point p in the editor, or with its message there, as
+        // { start, rect } (the rectangle under p), or null.
+        function targetUnder(p) {
+            if (!p)
+                return null;
             const t = editor.text, pos = editor.positionAt(p.x, p.y);
-            // positionAt gives the nearest gap, which is after the 💩 on its right half.
+            // positionAt gives the nearest gap, which is after the character on its right half.
             for (const c of [pos, pos > 0 ? vim.charStart(t, pos - 1) : -1]) {
-                if (c < 0 || !vim.hiddenAt(c))
+                const target = c >= 0 ? targetAt(c) : null;
+                if (!target)
                     continue;
-                const a = editor.cellAt(c), b = editor.cellAt(c + vim.poop.length);
+                const a = editor.cellAt(target.start), b = editor.cellAt(target.end);
                 if (p.x >= a.x && p.x < b.x && p.y >= a.y && p.y < a.y + a.height)
-                    return c;
+                    return { start: target.start, rect: Qt.rect(a.x, a.y, b.x - a.x, a.height) };
             }
-            return -1;
+            return diagnostics.messageUnder(p);
         }
 
         function pointerAt(p) {
-            const c = hiddenUnder(p);
+            const under = targetUnder(p);
+            const c = under ? under.start : -1;
             if (c === mouseAt)
                 return;
             mouseAt = c;
+            if (under)
+                mouseRect = under.rect;
             delay.stop();
             if (c >= 0 && c !== at)
                 delay.restart();
@@ -819,10 +959,10 @@ ApplicationWindow {
         visible: at >= 0
         width: frame.width
         height: frame.height
-        // Above the 💩, or below it when there's no room.
+        // Above the target, or below it when there's no room.
         x: Math.max(8, Math.min(anchorRect.x, (parent ? parent.width : 0) - width - 8))
         y: anchorRect.y - height - 4 >= 4 ? anchorRect.y - height - 4 : anchorRect.y + anchorRect.height + 4
-        // A little time to cross the gap between the 💩 and the box.
+        // A little time to cross the gap between the target and the box.
         onHeldChanged: {
             if (held || at < 0 || !byMouse)
                 grace.stop();
@@ -834,7 +974,7 @@ ApplicationWindow {
             id: delay
 
             interval: 300
-            onTriggered: hover.show(hover.mouseAt, true)
+            onTriggered: hover.show(hover.mouseAt, true, hover.mouseRect)
         }
 
         Timer {
@@ -847,7 +987,7 @@ ApplicationWindow {
         Rectangle {
             id: frame
 
-            width: scroller.width + 16
+            width: scroller.x + scroller.width + 8
             height: scroller.height + 8
             radius: 4
             color: Qt.tint(editor.palette.base, hover.dark ? "#12ffffff" : "#08000000")
@@ -872,11 +1012,43 @@ ApplicationWindow {
                 acceptedButtons: Qt.LeftButton
             }
 
+            // A diagnostic's icon, as in VS Code: a triangle for a warning,
+            // a circle for an error. Centered on the first line.
+            Item {
+                id: icon
+
+                visible: hover.severity !== ""
+                x: 8
+                y: scroller.y + (metrics.height - height) / 2
+                width: 16 * diagnostics.zoom
+                height: width
+
+                Shape {
+                    anchors.centerIn: parent
+                    width: 16
+                    height: 16
+                    scale: diagnostics.zoom // a vector shape, so it stays sharp
+                    preferredRendererType: Shape.CurveRenderer
+
+                    ShapePath {
+                        strokeColor: diagnostics.color(hover.severity)
+                        strokeWidth: 1.3
+                        fillColor: "transparent"
+                        capStyle: ShapePath.RoundCap
+                        joinStyle: ShapePath.RoundJoin
+
+                        PathSvg {
+                            path: hover.severity === "error" ? "M1.5 8 A6.5 6.5 0 1 1 14.5 8 A6.5 6.5 0 1 1 1.5 8 Z M5.7 5.7 L10.3 10.3 M10.3 5.7 L5.7 10.3" : "M8 1.8 L14.5 13.8 L1.5 13.8 Z M8 6.2 L8 9.6 M8 11.8 L8 11.9"
+                        }
+                    }
+                }
+            }
+
             // Not interactive, since a drag selects text; the wheel scrolls it.
             Flickable {
                 id: scroller
 
-                x: 8
+                x: icon.visible ? icon.x + icon.width + 6 * diagnostics.zoom : 8
                 y: 4
                 // Room beside the text for the scroll bar, when there is one.
                 width: label.width + (contentHeight > height ? scrollBar.width + 4 : 0)
@@ -900,7 +1072,7 @@ ApplicationWindow {
                 TextEdit {
                     id: label
 
-                    width: Math.min(implicitWidth, hover.maxWidth - 16)
+                    width: Math.min(implicitWidth, hover.maxWidth - scroller.x - 8)
                     text: hover.text
                     font: editor.font
                     color: editor.color
