@@ -1695,6 +1695,10 @@ QtObject {
         const wasVisual = isVisual;
         mode = m;
         syncing = true;
+        // Changing readOnly makes the editor scroll to where the cursor used
+        // to be, then setting the cursor puts its line at the top. Keep the
+        // view instead, and only scroll if the cursor is out of it.
+        const view = flickable && { x: flickable.contentX, y: flickable.contentY };
         // Read-only outside insert mode, so macOS doesn't turn held keys into
         // the accent picker and nothing but vim edits the text.
         editor.readOnly = m !== "insert";
@@ -1702,6 +1706,11 @@ QtObject {
             editor.deselect();
         if (!isVisual)
             editor.cursorPosition = Math.min(cursor, editor.length);
+        if (view) {
+            flickable.contentX = view.x;
+            flickable.contentY = view.y;
+            showCursor();
+        }
         syncing = false;
     }
 
@@ -3132,6 +3141,25 @@ QtObject {
             return;
         const max = Math.max(0, flickable.contentHeight - flickable.height);
         flickable.contentY = Math.max(0, Math.min(flickable.contentY + lines * lineHeight, max));
+    }
+
+    // Scrolls as little as shows the cursor.
+    function showCursor() {
+        if (!flickable)
+            return;
+        const f = flickable, r = editor.positionToRectangle(Math.min(cursor, editor.length));
+        const top = editor.topPadding + (lineOf(editor.text, cursor) - 1) * lineHeight;
+        const maxY = Math.max(0, f.contentHeight - f.height);
+        if (top < f.contentY)
+            f.contentY = top <= editor.topPadding ? 0 : top;
+        else if (top + lineHeight > f.contentY + f.height)
+            f.contentY = Math.min(maxY, top + lineHeight - f.height);
+        // The left edge is the padding (see keepCursorClear in main.qml).
+        const maxX = Math.max(0, f.contentWidth - f.width);
+        if (r.x < f.contentX + editor.leftPadding)
+            f.contentX = Math.max(0, r.x - editor.leftPadding);
+        else if (r.x + r.width > f.contentX + f.width)
+            f.contentX = Math.min(maxX, r.x + r.width - f.width);
     }
 
     function scrollToCursor(where) {

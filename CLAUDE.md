@@ -61,7 +61,10 @@ VimEdit: a plain-text editor in Rust + Qt 6 via cxx-qt 0.10, with the UI in QML.
 - **Vim**: `Vim.qml` owns the cursor (`vim.cursor` is the character under the block) and
   draws it as an overlay inside the `TextArea`. Insert mode uses the `TextArea`'s own
   cursor (`cursorDelegate`). Outside insert mode the `TextArea` is `readOnly`, so macOS
-  doesn't open the accent picker on held keys and only vim edits the text. Vim keeps its
+  doesn't open the accent picker on held keys and only vim edits the text.
+  Changing `readOnly` makes the editor scroll to a stale cursor position, so
+  `setMode` restores the view and then scrolls only if the cursor is out of it
+  (`showCursor`). Vim keeps its
   own undo stack (diffs per change), so native undo (Cmd+Z) is routed to it. Only the
   `"+`/`"*` registers use the system clipboard, via `Document.clipboardText()`.
 - **Macros**: typed keys are recorded as tokens (`"<Esc>"`, `"x"`); the register
