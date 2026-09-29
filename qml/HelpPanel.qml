@@ -7,7 +7,8 @@ import QtQuick.Effects
 // :help, a box over the editor with what isn't obvious: :set and its forms,
 // the commands, search, registers and macros, visual block and multiple
 // cursors, hidden text and other keys. :help topic scrolls to a section.
-// Keys scroll it as in a vim help buffer; Esc or q closes it.
+// Keys scroll it as in a vim help buffer; Esc or q closes it. Its text can be
+// selected with the mouse and copied.
 Popup {
     id: help
 
@@ -194,6 +195,15 @@ Popup {
         scroller.contentY = Math.max(0, Math.min(scroller.maxY, scroller.contentY + dy));
     }
 
+    // The text with a selection. Each text selects on its own, so selecting
+    // in one clears the last one.
+    property TextEdit selected: null
+
+    function copySelection() {
+        if (selected && selected.selectedText !== "")
+            selected.copy();
+    }
+
     // `code` in the editor's font, the rest as plain text.
     function styled(text) {
         const escaped = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -208,7 +218,11 @@ Popup {
     modal: true
     focus: true
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-    onClosed: editor.forceActiveFocus()
+    onClosed: {
+        if (selected)
+            selected.deselect();
+        editor.forceActiveFocus();
+    }
 
     Overlay.modal: Rectangle {
         color: help.dark ? "#60000000" : "#30000000"
@@ -227,6 +241,30 @@ Popup {
         }
     }
 
+    // Selectable, but never focused, so keys stay with the help (which
+    // forwards Copy, see copySelection).
+    component HelpText: TextEdit {
+        id: helpText
+
+        readOnly: true
+        selectByMouse: true
+        activeFocusOnPress: false
+        persistentSelection: true
+        selectionColor: help.editor.palette.highlight
+        selectedTextColor: help.editor.palette.highlightedText
+        onSelectedTextChanged: {
+            if (selectedText === "" || help.selected === helpText)
+                return;
+            if (help.selected)
+                help.selected.deselect();
+            help.selected = helpText;
+        }
+
+        HoverHandler {
+            cursorShape: Qt.IBeamCursor
+        }
+    }
+
     contentItem: Item {
         Item {
             id: header
@@ -234,7 +272,7 @@ Popup {
             width: parent.width
             height: title.height + 12 * help.zoom
 
-            Text {
+            HelpText {
                 id: title
 
                 text: "VimEdit Help"
@@ -242,7 +280,7 @@ Popup {
                 font.bold: true
                 color: help.editor.color
             }
-            Text {
+            HelpText {
                 anchors.right: parent.right
                 anchors.baseline: title.baseline
                 text: "Esc or q to close · j k to scroll"
@@ -263,20 +301,28 @@ Popup {
             contentHeight: body.height
             clip: true
             focus: true
-            boundsBehavior: Flickable.StopAtBounds
+            // Not interactive, since a drag selects text; the wheel scrolls it.
+            interactive: false
 
             ScrollBar.vertical: ScrollBar {
+                id: scrollBar
+
                 onPressedChanged: help.shownSection = -1
             }
 
             onMaxYChanged: help.showSection()
-            onMovementStarted: help.shownSection = -1
+
+            WheelHandler {
+                onWheel: event => help.scrollBy(-(event.pixelDelta.y || event.angleDelta.y / 120 * 3 * help.lineStep))
+            }
 
             // As in a vim help buffer, and the usual keys.
             Keys.onPressed: event => {
                 const ctrl = event.modifiers & (help.isMac ? Qt.MetaModifier : Qt.ControlModifier);
                 const page = height - help.lineStep;
-                if (event.key === Qt.Key_Escape || event.key === Qt.Key_Q && !event.modifiers)
+                if (event.matches(StandardKey.Copy))
+                    help.copySelection();
+                else if (event.key === Qt.Key_Escape || event.key === Qt.Key_Q && !event.modifiers)
                     help.close();
                 else if (event.key === Qt.Key_J && !ctrl || event.key === Qt.Key_Down || ctrl && event.key === Qt.Key_E)
                     help.scrollBy(help.lineStep);
@@ -319,18 +365,18 @@ Popup {
                         width: body.width
                         spacing: 6 * help.zoom
 
-                        Text {
+                        HelpText {
                             text: section.modelData.title
                             font.pixelSize: Math.round(15 * help.zoom)
                             font.bold: true
                             color: help.editor.palette.accent
                         }
-                        Text {
+                        HelpText {
                             width: parent.width
                             visible: !!section.modelData.intro
                             text: help.styled(section.modelData.intro || "")
-                            textFormat: Text.RichText
-                            wrapMode: Text.Wrap
+                            textFormat: TextEdit.RichText
+                            wrapMode: TextEdit.Wrap
                             font.pixelSize: Math.round(13 * help.zoom)
                             color: help.editor.color
                         }
@@ -344,37 +390,59 @@ Popup {
 
                                 spacing: 12 * help.zoom
 
-                                Text {
+                                HelpText {
                                     id: keysText
 
                                     width: Math.round(body.width * 0.34)
                                     text: row.modelData[0]
-                                    textFormat: Text.PlainText
-                                    wrapMode: Text.Wrap
+                                    textFormat: TextEdit.PlainText
+                                    wrapMode: TextEdit.Wrap
                                     font.family: help.monoFamily
                                     font.pixelSize: Math.round(13 * help.zoom)
                                     color: help.editor.color
                                 }
-                                Text {
+                                HelpText {
                                     width: body.width - keysText.width - row.spacing
                                     text: help.styled(row.modelData[1])
-                                    textFormat: Text.RichText
-                                    wrapMode: Text.Wrap
+                                    textFormat: TextEdit.RichText
+                                    wrapMode: TextEdit.Wrap
                                     font.pixelSize: Math.round(13 * help.zoom)
                                     color: help.editor.color
                                 }
                             }
                         }
-                        Text {
+                        HelpText {
                             width: parent.width
                             visible: !!section.modelData.note
                             text: help.styled(section.modelData.note || "")
-                            textFormat: Text.RichText
-                            wrapMode: Text.Wrap
+                            textFormat: TextEdit.RichText
+                            wrapMode: TextEdit.Wrap
                             font.pixelSize: Math.round(12 * help.zoom)
                             color: help.dimColor
                         }
                     }
+                }
+            }
+        }
+
+        // A press anywhere but on the selected text (or the scroll bar)
+        // clears the selection, as in other apps. The handler only watches,
+        // so the press goes on to what's under it. Not a MouseArea, which
+        // would show its arrow cursor over the text's I-beam.
+        Item {
+            id: pressWatcher
+
+            anchors.fill: parent
+            anchors.margins: -help.padding
+            z: 1
+
+            PointHandler {
+                acceptedButtons: Qt.LeftButton
+                onActiveChanged: {
+                    const s = help.selected, p = point.position;
+                    if (active && s && !s.contains(pressWatcher.mapToItem(s, p))
+                        && !scrollBar.contains(pressWatcher.mapToItem(scrollBar, p)))
+                        s.deselect();
                 }
             }
         }

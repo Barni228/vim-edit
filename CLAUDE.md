@@ -170,7 +170,12 @@ VimEdit: a plain-text editor in Rust + Qt 6 via cxx-qt 0.10, with the UI in QML.
   section answers (`:h macros`). When adding a feature or key that isn't
   standard vim or obvious, add it there. Wrapped text settles over the first
   frames, so `:h topic` keeps scrolling to its section as the layout changes,
-  until the user scrolls.
+  until the user scrolls. Each text is a read-only `TextEdit` (`HelpText`)
+  that selects on its own (selecting one clears the last, and a
+  `PointHandler` on top clears it on a press elsewhere, only watching the
+  press; a `MouseArea` there would show its arrow over the I-beam). The
+  keys stay with the help, which forwards Copy. A drag selects, so its
+  `Flickable` isn't interactive and a `WheelHandler` scrolls it.
 - Don't make a QML binding depend on something by reading it as a bare statement
   (`editor.revision;`): the app's QML is compiled ahead of time, which can drop it,
   though `qmltestrunner` keeps it. Use the value, e.g. `TextMetrics.advanceWidth`
