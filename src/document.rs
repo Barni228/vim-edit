@@ -50,9 +50,16 @@ pub mod qobject {
         #[qinvokable]
         fn set_clipboard_text(self: &Document, text: &QString, data: &QString);
 
-        /// Gives every line of a TextEdit's `textDocument` the same height.
+        /// Gives every line of a TextEdit's `textDocument` the same height,
+        /// plus margins below it and on its left.
         #[qinvokable]
-        unsafe fn set_line_height(self: &Document, text_document: *mut QObject, height: f64);
+        unsafe fn set_line_format(
+            self: &Document,
+            text_document: *mut QObject,
+            height: f64,
+            bottom_margin: f64,
+            left_margin: f64,
+        );
     }
 
     impl cxx_qt::Initialize for Document {}
@@ -116,7 +123,15 @@ impl qobject::Document {
     /// # Safety
     ///
     /// `text_document` must be null or point to a live QObject.
-    unsafe fn set_line_height(&self, text_document: *mut qobject::QObject, height: f64) {
-        unsafe { platform::ffi::set_line_height(text_document.cast(), height) };
+    unsafe fn set_line_format(
+        &self,
+        text_document: *mut qobject::QObject,
+        height: f64,
+        bottom_margin: f64,
+        left_margin: f64,
+    ) {
+        unsafe {
+            platform::ffi::set_line_format(text_document.cast(), height, bottom_margin, left_margin)
+        };
     }
 }

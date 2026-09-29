@@ -103,7 +103,7 @@ setClipboardText(const QString& text, const QString& data)
 }
 
 void
-setLineHeight(QObject* textDocument, double height)
+setLineFormat(QObject* textDocument, double height, double bottomMargin, double leftMargin)
 {
   auto* quickDocument = qobject_cast<QQuickTextDocument*>(textDocument);
   if (!quickDocument)
@@ -112,5 +112,7 @@ setLineHeight(QObject* textDocument, double height)
   cursor.select(QTextCursor::Document);
   QTextBlockFormat format;
   format.setLineHeight(height, QTextBlockFormat::FixedHeight);
+  format.setBottomMargin(bottomMargin);
+  format.setLeftMargin(leftMargin);
   cursor.mergeBlockFormat(format);
 }

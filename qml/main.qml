@@ -14,9 +14,15 @@ ApplicationWindow {
     property bool modified: false
     readonly property int defaultFontSize: 16
     property int fontSize: defaultFontSize
-    // Every line is this tall, even one with an emoji (see fixLineHeight).
+    // Every line is this tall, even one with an emoji (see fixLineFormat).
     // The extra space keeps an emoji clear of the lines around it.
     readonly property int lineHeight: Math.ceil(metrics.lineSpacing * 1.25)
+    // Where the baseline is in a line: the font's characters sit in the
+    // middle of it (see fixLineFormat).
+    readonly property real textBaseline: (lineHeight + metrics.ascent - metrics.descent) / 2
+    // With line numbers, the text starts this far after the editor's left
+    // padding (see fixLineFormat).
+    readonly property real textIndent: gutter.shown ? digitMetrics.advanceWidth / 2 : 0
 
     width: 900
     height: 650
@@ -45,15 +51,24 @@ ApplicationWindow {
     }
 
     // An emoji comes from a taller font than the editor's, which makes its line
-    // taller. Give every line the same height instead. The block format that
-    // does this counts as an edit, but isn't one.
-    function fixLineHeight() {
+    // taller. Give every line the same height instead. Qt puts a fixed-height
+    // line's baseline at 4/5 of it, so to center the text, the line is made
+    // shorter and a bottom margin makes up the rest. A left margin makes the
+    // textIndent: the editor clips text scrolled sideways at its padding, but
+    // not at the margin, so it shows between the line numbers and the text.
+    // The block format that does all this counts as an edit, but isn't one.
+    function fixLineFormat() {
         const wasModified = modified;
-        doc.setLineHeight(editor.textDocument, lineHeight);
+        // Not textBaseline, which may not have caught up with the font yet.
+        const baseline = (lineHeight + metrics.ascent - metrics.descent) / 2;
+        const height = Math.min(lineHeight, baseline * 5 / 4);
+        doc.setLineFormat(editor.textDocument, height, lineHeight - height, textIndent);
         modified = wasModified;
     }
 
-    onLineHeightChanged: fixLineHeight()
+    onLineHeightChanged: fixLineFormat()
+    onTextBaselineChanged: fixLineFormat()
+    onTextIndentChanged: fixLineFormat()
 
     function toggleHidden() {
         vim.toggleHidden();
@@ -70,7 +85,7 @@ ApplicationWindow {
 
         onLoaded: (path, text) => {
             editor.text = text;
-            root.fixLineHeight(); // setting the text reset it
+            root.fixLineFormat(); // setting the text reset it
             vim.reset();
             root.filePath = path;
             root.modified = false;
@@ -124,26 +139,15 @@ ApplicationWindow {
             // Whether the insert-mode bars are in the visible half of a blink.
             property bool blinkOn: true
 
-            // The rectangle of the character at pos. positionToRectangle gives
-            // a line with an emoji its natural height, but every line is
-            // root.lineHeight tall (see fixLineHeight), so snap to that.
+            // The rectangle of the character at pos, as tall as the line. The
+            // cursors and highlights use it rather than positionToRectangle,
+            // which gives a line with an emoji its natural height, while every
+            // line is root.lineHeight tall (see fixLineFormat).
             function cellAt(pos) {
                 const r = positionToRectangle(pos);
                 const h = root.lineHeight;
                 const line = Math.round((r.y + r.height / 2 - topPadding - h / 2) / h);
                 return Qt.rect(r.x, topPadding + line * h, r.width, h);
-            }
-
-            // Where the baseline is in a cell: Qt puts a fixed-height line's
-            // baseline at 4/5.
-            readonly property real textBaseline: root.lineHeight * 0.8
-
-            // The part of the cell at pos that the font's characters take up.
-            // The cursors and highlights use it rather than Qt's rectangles,
-            // which on a line with an emoji are as tall as the emoji.
-            function bandAt(pos) {
-                const c = cellAt(pos);
-                return Qt.rect(c.x, c.y + textBaseline - metrics.ascent, c.width, metrics.height);
             }
 
             // The selection in the visible lines, as one { start, end, eol }
@@ -195,10 +199,11 @@ ApplicationWindow {
             onSelectedTextChanged: vim.syncFromEditor()
             onRevisionChanged: hover.hide()
             onActiveFocusChanged: if (!activeFocus) hover.hide()
-            // Make room for the line numbers beside the style's padding.
+            // Make room for the line numbers beside the style's padding (less
+            // the textIndent, which the block format adds).
             Component.onCompleted: {
                 const base = leftPadding;
-                leftPadding = Qt.binding(() => base + gutter.columnWidth);
+                leftPadding = Qt.binding(() => base + gutter.columnWidth - root.textIndent);
             }
             Keys.onPressed: event => {
                 if (event.matches(StandardKey.Copy) && hover.copySelection()) {
@@ -218,7 +223,7 @@ ApplicationWindow {
             }
 
             // Insert mode: a blinking bar. The editor puts the delegate at its
-            // cursor rectangle; the bar itself fills the text band.
+            // cursor rectangle; the bar itself fills the line.
             cursorDelegate: Item {
                 id: bar
 
@@ -226,9 +231,9 @@ ApplicationWindow {
                 visible: vim.mode === "insert" && editor.activeFocus && editor.blinkOn
 
                 Rectangle {
-                    y: editor.bandAt(editor.cursorPosition).y - bar.y
+                    y: editor.cellAt(editor.cursorPosition).y - bar.y
                     width: parent.width
-                    height: metrics.height
+                    height: root.lineHeight
                     color: editor.color
                 }
             }
@@ -273,8 +278,8 @@ ApplicationWindow {
                     spots = vim.cursors.map(c => {
                         const pos = Math.min(c.pos, editor.length);
                         const ch = t.slice(pos, vim.charEnd(t, pos));
-                        const shown = ch === "\t" || ch === "\n" || ch === " " ? "" : ch;
-                        return { band: editor.bandAt(pos), character: shown,
+                        const shown = ch === "\t" || ch === "\n" || ch === "\u2029" ? "" : ch;
+                        return { cell: editor.cellAt(pos), character: shown,
                             width: metrics.advanceWidth(shown || " ") };
                     });
                 }
@@ -288,24 +293,58 @@ ApplicationWindow {
                         required property var modelData
                         // The main cursor's shape: "bar", "block" or "underline".
                         readonly property string shape: vim.cursorShape
-                        readonly property rect band: modelData.band
+                        readonly property rect cell: modelData.cell
 
-                        x: band.x
-                        y: shape === "underline" ? band.y + band.height - height : band.y
+                        x: cell.x
+                        y: shape === "underline" ? cell.y + cell.height - height : cell.y
                         width: shape === "bar" ? 2 : modelData.width
-                        height: shape === "underline" ? Math.max(2, Math.round(band.height / 8)) : band.height
+                        height: shape === "underline" ? Math.max(2, Math.round(cell.height / 8)) : cell.height
                         color: editor.color
                         visible: shape !== "bar" || editor.activeFocus && editor.blinkOn
                         opacity: editor.activeFocus ? 1 : 0.4
 
                         Text {
-                            y: metrics.ascent - baselineOffset
+                            y: root.textBaseline - baselineOffset
                             visible: parent.shape === "block"
                             text: parent.modelData.character
                             font: editor.font
                             color: editor.palette.base
                             textFormat: Text.PlainText
                         }
+                    }
+                }
+            }
+
+            // The lines with a cursor (the main one and the extras), a shade
+            // off the background as in other editors, under the selection.
+            // Not while there's a selection.
+            Item {
+                id: lineHighlights
+
+                component Band: Rectangle {
+                    required property rect row
+
+                    x: scrollView.contentItem.contentX
+                    y: row.y
+                    width: scrollView.contentItem.width
+                    height: row.height
+                    color: Qt.tint(editor.palette.base, editor.palette.base.hslLightness < 0.5 ? "#19ffffff" : "#0f000000")
+                }
+
+                z: -0.6
+                visible: !vim.isVisual
+
+                Band {
+                    row: block.cell
+                }
+
+                Repeater {
+                    model: extraCursors.spots
+
+                    Band {
+                        required property var modelData
+
+                        row: modelData.cell
                     }
                 }
             }
@@ -341,8 +380,8 @@ ApplicationWindow {
 
                     Rectangle {
                         required property var modelData
-                        readonly property rect startRect: editor.bandAt(modelData.start)
-                        readonly property rect endRect: editor.bandAt(modelData.end)
+                        readonly property rect startRect: editor.cellAt(modelData.start)
+                        readonly property rect endRect: editor.cellAt(modelData.end)
 
                         x: startRect.x
                         y: startRect.y
@@ -384,8 +423,8 @@ ApplicationWindow {
 
                     Rectangle {
                         required property var modelData
-                        readonly property rect startRect: editor.bandAt(modelData.start)
-                        readonly property rect endRect: editor.bandAt(modelData.end)
+                        readonly property rect startRect: editor.cellAt(modelData.start)
+                        readonly property rect endRect: editor.cellAt(modelData.end)
 
                         x: startRect.x
                         y: startRect.y
@@ -395,7 +434,7 @@ ApplicationWindow {
 
                         // Redraw the matched text on top, dark on the highlight.
                         Text {
-                            y: metrics.ascent - baselineOffset
+                            y: root.textBaseline - baselineOffset
                             text: editor.getText(modelData.start, modelData.end)
                             font: editor.font
                             color: "black"
@@ -419,7 +458,7 @@ ApplicationWindow {
                 // updated yet, and asking for a position then warns.
                 function refresh() {
                     const pos = Math.min(vim.cursor, editor.length);
-                    cell = editor.bandAt(pos);
+                    cell = editor.cellAt(pos);
                     const t = editor.text;
                     const c = t.slice(pos, vim.charEnd(t, pos)); // e.g. a whole emoji
                     character = c === "\t" || c === "\n" || c === "\u2029" ? "" : c;
@@ -476,7 +515,7 @@ ApplicationWindow {
                 opacity: editor.activeFocus ? 1 : 0.4
 
                 Text {
-                    y: metrics.ascent - baselineOffset
+                    y: root.textBaseline - baselineOffset
                     visible: !parent.underline
                     text: parent.character
                     font: editor.font
@@ -486,10 +525,11 @@ ApplicationWindow {
             }
 
             // Line numbers (:set number / relativenumber) for the visible
-            // lines, in the left padding. It stays put when the text scrolls
-            // sideways, and covers the text that scrolls under it. As in vim,
-            // with both options the cursor's line shows its own number, on
-            // the left.
+            // lines, on a darker background that fills the left padding and
+            // stops half a space (root.textIndent) before the text. It stays
+            // put when the text scrolls sideways, and covers the text that
+            // scrolls under it. As in vim, with both options the cursor's
+            // line shows its own number, on the left.
             Rectangle {
                 id: gutter
 
@@ -543,8 +583,8 @@ ApplicationWindow {
                     Text {
                         required property var modelData
 
-                        x: editor.leftPadding - gutter.columnWidth
-                        y: editor.topPadding + modelData.line * root.lineHeight + editor.textBaseline - baselineOffset
+                        x: editor.leftPadding + root.textIndent - gutter.columnWidth
+                        y: editor.topPadding + modelData.line * root.lineHeight + root.textBaseline - baselineOffset
                         width: gutter.digits * digitMetrics.advanceWidth
                         horizontalAlignment: modelData.left ? Text.AlignLeft : Text.AlignRight
                         text: modelData.label
@@ -585,6 +625,35 @@ ApplicationWindow {
         }
     }
 
+    // The editor scrolls its cursor into view as far as its padding, but the
+    // text starts root.textIndent later, so keep vim's cursor that far clear
+    // of the line numbers too (e.g. 0 scrolls all the way back). Runs after
+    // the editor's own scrolling. The view snaps to whole pixels, so round
+    // down.
+    function keepCursorClear() {
+        const f = scrollView.contentItem;
+        const min = Math.floor(editor.positionToRectangle(Math.min(vim.cursor, editor.length)).x
+            - editor.leftPadding - textIndent);
+        if (f.contentX > min)
+            f.contentX = Math.max(0, min);
+    }
+
+    Connections {
+        target: editor
+
+        function onCursorRectangleChanged() {
+            Qt.callLater(root.keepCursorClear);
+        }
+    }
+
+    Connections {
+        target: vim
+
+        function onCursorChanged() {
+            Qt.callLater(root.keepCursorClear);
+        }
+    }
+
     // The text in a hidden-text 💩, shown like VS Code's hover: after the
     // pointer rests on the 💩, or on gh. Its text can be selected with the
     // mouse and copied. Any other key, a scroll or an edit hides it, and one
@@ -609,7 +678,7 @@ ApplicationWindow {
             if (!h)
                 return;
             text = vim.revealAll(h.item.text, h.item.hidden).replace(/\n$/, "");
-            const a = editor.bandAt(pos), b = editor.bandAt(pos + vim.poop.length);
+            const a = editor.cellAt(pos), b = editor.cellAt(pos + vim.poop.length);
             anchorRect = editor.mapToItem(parent, a.x, a.y, b.x - a.x, a.height);
             scroller.contentY = 0;
             byMouse = mouse;
@@ -1065,7 +1134,7 @@ ApplicationWindow {
         // The editor sits in a ScrollView, which is its own focus scope, so
         // `focus: true` alone doesn't give it the keyboard.
         editor.forceActiveFocus();
-        fixLineHeight();
+        fixLineFormat();
 
         const startup = doc.startupFile();
         if (startup)

@@ -28,8 +28,14 @@ pub mod ffi {
         #[cxx_name = "setClipboardText"]
         fn set_clipboard_text(text: &QString, data: &QString);
 
-        /// Gives every line of a QQuickTextDocument the same height.
-        #[cxx_name = "setLineHeight"]
-        unsafe fn set_line_height(text_document: *mut QObject, height: f64);
+        /// Gives every line of a QQuickTextDocument the same height, plus
+        /// margins below it and on its left.
+        #[cxx_name = "setLineFormat"]
+        unsafe fn set_line_format(
+            text_document: *mut QObject,
+            height: f64,
+            bottom_margin: f64,
+            left_margin: f64,
+        );
     }
 }

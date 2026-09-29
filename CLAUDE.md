@@ -116,16 +116,22 @@ VimEdit: a plain-text editor in Rust + Qt 6 via cxx-qt 0.10, with the UI in QML.
   `editor.font`; other UI (like `FindBar`) scales its sizes by `zoom`
   (`root.fontSize / root.defaultFontSize`). New UI must do the same.
 - **Line height**: emoji come from a taller font and would make their line
-  taller, so `fixLineHeight` gives every block a fixed height (a block format,
-  reapplied after setting `editor.text`). Qt's selection and `positionToRectangle`
-  still use the natural (taller) height on emoji lines, so VimEdit draws the
-  selection itself (under the text, `z: -0.5`), and all overlays use
-  `editor.bandAt` (the font's height, snapped to the line grid).
+  taller, so `fixLineFormat` gives every block a fixed height (a block format,
+  reapplied after setting `editor.text`). Qt puts a fixed-height line's baseline
+  at 4/5 of it, so to center the text the block gets a shorter line plus a
+  bottom margin that makes up `root.lineHeight` (`root.textBaseline` is where
+  the baseline ends up). Qt's selection and `positionToRectangle` still use the
+  natural (taller) height on emoji lines, so VimEdit draws the selection itself
+  (under the text, `z: -0.5`), and all overlays use `editor.cellAt` (the whole
+  line, snapped to the line grid). The current-line highlight is at `z: -0.6`.
 - **Line numbers** (`:set nu`/`rnu`, `vim.number`/`vim.relativeNumber`): the
   `gutter` is a child of the `TextArea` (so it scrolls with the text), kept at
   `contentX` and drawn over text scrolled under it. The styles hard-code
   `leftPadding` (7 on macOS, `padding + 4` in Fusion), so the editor keeps the
   style's value and adds the gutter width to it. Only visible lines get a row.
+  A `TextArea` attached to a `Flickable` (as in a `ScrollView`) clips its text
+  at the padding, so the half space between the gutter and the text is a block
+  left margin (`root.textIndent`), where scrolled text still shows.
 - Don't make a QML binding depend on something by reading it as a bare statement
   (`editor.revision;`): the app's QML is compiled ahead of time, which can drop it,
   though `qmltestrunner` keeps it. Use the value, e.g. `TextMetrics.advanceWidth`
