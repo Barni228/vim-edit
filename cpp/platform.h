@@ -12,6 +12,9 @@ void installFileOpenFilter(QObject& target);
 // Rename it to "Settings…" to match current macOS conventions.
 void useSettingsMenuTitle();
 
+// Sets the Qt Quick Controls style. Must run before QML is loaded.
+void setControlsStyle(const QString& style);
+
 // System clipboard access for the vim "+ and "* registers. Other registers
 // never touch the clipboard. Along with the text, VimEdit can store data of
 // its own (the hidden texts behind 💩s), which only VimEdit reads.

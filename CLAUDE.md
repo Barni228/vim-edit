@@ -54,7 +54,9 @@ VimEdit: a plain-text editor in Rust + Qt 6 via cxx-qt 0.10, with the UI in QML.
   cc and rustc target the build machine's macOS version. `macdeployqt` breaks
   signatures, so the bundle is re-signed ad hoc. The Homebrew-only `macdeployqt` errors
   about QtSvg are harmless.
-- **Windows**: `main.rs` sets `QT_QUICK_CONTROLS_STYLE=Fusion`, because the
+- **Windows**: `main.rs` sets the Fusion style (`QQuickStyle::setStyle`, unless
+  `QT_QUICK_CONTROLS_STYLE` is set; setting that variable from Rust doesn't
+  reach Qt, which reads the C runtime's startup copy), because the
   default "Windows" style has no dark theme (FluentWinUI3 left the title bar and
   menus light; Fusion doesn't). Its framed TextArea background is replaced with a
   plain one. The MSVC CRT DLLs are copied app-locally, so no VC++ Redistributable is

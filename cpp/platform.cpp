@@ -10,6 +10,7 @@
 #include <QtGui/QTextCursor>
 #include <QtGui/QTextDocument>
 #include <QtQuick/QQuickTextDocument>
+#include <QtQuickControls2/QQuickStyle>
 
 namespace {
 
@@ -75,6 +76,12 @@ useSettingsMenuTitle()
 {
   auto* app = QCoreApplication::instance();
   app->installTranslator(new MacMenuTranslator(app));
+}
+
+void
+setControlsStyle(const QString& style)
+{
+  QQuickStyle::setStyle(style);
 }
 
 QString

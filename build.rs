@@ -6,6 +6,7 @@ fn main() {
     )
     .qt_module("Gui")
     .qt_module("Quick")
+    .qt_module("QuickControls2")
     .files(["src/document.rs", "src/platform.rs"])
     .cpp_file("cpp/platform.cpp")
     .include_dir("cpp")

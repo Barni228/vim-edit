@@ -16,6 +16,11 @@ pub mod ffi {
         #[cxx_name = "useSettingsMenuTitle"]
         fn use_settings_menu_title();
 
+        /// Sets the Qt Quick Controls style; call it before loading QML.
+        #[cxx_name = "setControlsStyle"]
+        #[allow(dead_code)] // used on Windows only
+        fn set_controls_style(style: &QString);
+
         /// Reads the system clipboard (vim's "+ and "* registers).
         #[cxx_name = "clipboardText"]
         fn clipboard_text() -> QString;
