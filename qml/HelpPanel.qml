@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Effects
@@ -9,7 +11,7 @@ import QtQuick.Effects
 Popup {
     id: help
 
-    required property Item editor
+    required property TextArea editor
 
     // Follows the editor's zoom (Cmd+ and Cmd-), like every text in the app.
     property real zoom: 1

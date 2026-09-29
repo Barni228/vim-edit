@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Effects
@@ -14,7 +16,7 @@ Window {
 
     required property var app // main.qml's window: fontSize, theme
     required property var vim // number, relativeNumber
-    required property Item editor
+    required property TextArea editor
     required property var settings // the saved settings: keepChanges
 
     // Follows the editor's zoom (Cmd+ and Cmd-), like every text in the app.

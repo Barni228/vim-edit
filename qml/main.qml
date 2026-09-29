@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtCore
 import QtQuick
 import QtQuick.Controls
@@ -85,8 +87,7 @@ ApplicationWindow {
     // Qt 6.8 and later can override the system's light or dark mode, which
     // also changes the palette, the title bar and the menus.
     function applyTheme() {
-        Application.styleHints.colorScheme = theme === "light" ? Qt.ColorScheme.Light
-            : theme === "dark" ? Qt.ColorScheme.Dark : Qt.ColorScheme.Unknown;
+        Application.styleHints.colorScheme = theme === "light" ? Qt.ColorScheme.Light : theme === "dark" ? Qt.ColorScheme.Dark : Qt.ColorScheme.Unknown;
     }
 
     onThemeChanged: applyTheme()
@@ -118,7 +119,10 @@ ApplicationWindow {
     }
 
     // Where the settings in use live, other than in root.
-    readonly property var settingOwners: ({ number: vim, relativeNumber: vim })
+    readonly property var settingOwners: ({
+            number: vim,
+            relativeNumber: vim
+        })
 
     // Saves the setting in use after a zoom or :set, if keepChanges says to.
     function keepChange(name) {
@@ -176,7 +180,7 @@ ApplicationWindow {
         id: vim
 
         editor: editor
-        flickable: scrollView.contentItem
+        flickable: scrollView.contentItem as Flickable
         clipboard: doc
         lineHeight: root.lineHeight
         number: settings.number
@@ -243,7 +247,7 @@ ApplicationWindow {
                 const s = selectionStart, e = selectionEnd;
                 if (s === e && !block)
                     return [];
-                const t = text, f = scrollView.contentItem;
+                const t = text, f = scrollView.contentItem as Flickable;
                 const top = Math.floor((f.contentY - topPadding) / root.lineHeight);
                 const bottom = Math.ceil((f.contentY + f.height - topPadding) / root.lineHeight);
                 const last = vim.lineEnd(t, vim.lineToPos(t, Math.max(bottom, 0) + 1));
@@ -253,11 +257,15 @@ ApplicationWindow {
                 }
                 const to = Math.min(e, last);
                 const spans = [];
-                for (let p = Math.max(s, vim.lineToPos(t, Math.max(top, 0) + 1)); p <= to;) {
+                for (let p = Math.max(s, vim.lineToPos(t, Math.max(top, 0) + 1)); p <= to; ) {
                     const le = vim.lineEnd(t, p);
                     if (p === e)
                         break;
-                    spans.push({ start: p, end: Math.min(le, e), eol: le < e });
+                    spans.push({
+                        start: p,
+                        end: Math.min(le, e),
+                        eol: le < e
+                    });
                     p = le + 1;
                 }
                 return spans;
@@ -283,7 +291,8 @@ ApplicationWindow {
             }
             onSelectedTextChanged: vim.syncFromEditor()
             onRevisionChanged: hover.hide()
-            onActiveFocusChanged: if (!activeFocus) hover.hide()
+            onActiveFocusChanged: if (!activeFocus)
+                hover.hide()
             // Make room for the line numbers beside the style's padding (less
             // the textIndent, which the block format adds).
             Component.onCompleted: {
@@ -355,8 +364,7 @@ ApplicationWindow {
                 id: extraCursors
 
                 property var spots: []
-                readonly property var inputs: [vim.cursors, editor.revision, editor.font,
-                    editor.contentWidth, editor.contentHeight, editor.leftPadding]
+                readonly property var inputs: [vim.cursors, editor.revision, editor.font, editor.contentWidth, editor.contentHeight, editor.leftPadding]
 
                 function refresh() {
                     const t = editor.text;
@@ -364,8 +372,11 @@ ApplicationWindow {
                         const pos = Math.min(c.pos, editor.length);
                         const ch = t.slice(pos, vim.charEnd(t, pos));
                         const shown = ch === "\t" || ch === "\n" || ch === "\u2029" ? "" : ch;
-                        return { cell: editor.cellAt(pos), character: shown,
-                            width: metrics.advanceWidth(shown || " ") };
+                        return {
+                            cell: editor.cellAt(pos),
+                            character: shown,
+                            width: metrics.advanceWidth(shown || " ")
+                        };
                     });
                 }
 
@@ -406,16 +417,6 @@ ApplicationWindow {
             Item {
                 id: lineHighlights
 
-                component Band: Rectangle {
-                    required property rect row
-
-                    x: scrollView.contentItem.contentX
-                    y: row.y
-                    width: scrollView.contentItem.width
-                    height: row.height
-                    color: Qt.tint(editor.palette.base, editor.palette.base.hslLightness < 0.5 ? "#19ffffff" : "#0f000000")
-                }
-
                 z: -0.6
                 visible: !vim.isVisual
 
@@ -440,10 +441,7 @@ ApplicationWindow {
                 id: selection
 
                 property var spans: []
-                readonly property var inputs: [editor.selectionStart, editor.selectionEnd, editor.revision,
-                    vim.mode, vim.anchor, vim.cursor, vim.wantCol,
-                    scrollView.contentItem.contentY, scrollView.contentItem.height,
-                    editor.contentWidth, editor.contentHeight, editor.leftPadding]
+                readonly property var inputs: [editor.selectionStart, editor.selectionEnd, editor.revision, vim.mode, vim.anchor, vim.cursor, vim.wantCol, scrollView.contentItem.contentY, scrollView.contentItem.height, editor.contentWidth, editor.contentHeight, editor.leftPadding]
 
                 function refresh() {
                     spans = []; // recompute every rectangle, as for `highlights`
@@ -486,19 +484,15 @@ ApplicationWindow {
                 id: highlights
 
                 property var spans: []
-                readonly property var inputs: [editor.revision, vim.commandLine, vim.highlightPattern,
-                    vim.searchTarget, findBar.active, findBar.matches, findBar.current,
-                    scrollView.contentItem.contentY, scrollView.contentItem.height,
-                    editor.contentWidth, editor.contentHeight, // these follow font size changes
-                    editor.leftPadding] // and this the line numbers
+                readonly property var inputs: [editor.revision, vim.commandLine, vim.highlightPattern, vim.searchTarget, findBar.active, findBar.matches, findBar.current, scrollView.contentItem.contentY, scrollView.contentItem.height, editor.contentWidth, editor.contentHeight // these follow font size changes
+                    , editor.leftPadding] // and this the line numbers
 
                 function refresh() {
                     // The Repeater keeps its delegates when the new spans equal
                     // the old ones, but after a relayout their rectangles must
                     // be recomputed, so always start from an empty model.
                     spans = [];
-                    spans = vim.typedSearch() === null && findBar.active ? findBar.highlightSpans()
-                        : vim.searchHighlights();
+                    spans = vim.typedSearch() === null && findBar.active ? findBar.highlightSpans() : vim.searchHighlights();
                 }
 
                 onInputsChanged: Qt.callLater(refresh)
@@ -623,9 +617,7 @@ ApplicationWindow {
                 // Room for the numbers and two spaces after them.
                 readonly property real columnWidth: shown ? (digits + 2) * digitMetrics.advanceWidth : 0
                 property var rows: []
-                readonly property var inputs: [shown, vim.number, vim.relativeNumber, vim.cursor,
-                    editor.revision, scrollView.contentItem.contentY, scrollView.contentItem.height,
-                    editor.contentHeight, root.lineHeight]
+                readonly property var inputs: [shown, vim.number, vim.relativeNumber, vim.cursor, editor.revision, scrollView.contentItem.contentY, scrollView.contentItem.height, editor.contentHeight, root.lineHeight]
 
                 function refresh() {
                     if (!shown) {
@@ -641,8 +633,12 @@ ApplicationWindow {
                     const list = [];
                     for (let i = top; i <= bottom; i++) {
                         const own = i === current && vim.number;
-                        list.push({ line: i, current: i === current, left: own && vim.relativeNumber,
-                            label: String(vim.relativeNumber && !own ? Math.abs(i - current) : i + 1) });
+                        list.push({
+                            line: i,
+                            current: i === current,
+                            left: own && vim.relativeNumber,
+                            label: String(vim.relativeNumber && !own ? Math.abs(i - current) : i + 1)
+                        });
                     }
                     rows = list;
                 }
@@ -674,13 +670,22 @@ ApplicationWindow {
                         horizontalAlignment: modelData.left ? Text.AlignLeft : Text.AlignRight
                         text: modelData.label
                         font: editor.font
-                        color: modelData.current ? editor.color
-                            : Qt.tint(editor.palette.base, editor.palette.base.hslLightness < 0.5 ? "#80ffffff" : "#80000000")
+                        color: modelData.current ? editor.color : Qt.tint(editor.palette.base, editor.palette.base.hslLightness < 0.5 ? "#80ffffff" : "#80000000")
                         textFormat: Text.PlainText
                     }
                 }
             }
         }
+    }
+
+    component Band: Rectangle {
+        required property rect row
+
+        x: scrollView.contentItem.contentX
+        y: row.y
+        width: scrollView.contentItem.width
+        height: row.height
+        color: Qt.tint(editor.palette.base, editor.palette.base.hslLightness < 0.5 ? "#19ffffff" : "#0f000000")
     }
 
     // Clips the find bar as it slides in from above the editor.
@@ -716,9 +721,8 @@ ApplicationWindow {
     // the editor's own scrolling. The view snaps to whole pixels, so round
     // down.
     function keepCursorClear() {
-        const f = scrollView.contentItem;
-        const min = Math.floor(editor.positionToRectangle(Math.min(vim.cursor, editor.length)).x
-            - editor.leftPadding - textIndent);
+        const f = scrollView.contentItem as Flickable;
+        const min = Math.floor(editor.positionToRectangle(Math.min(vim.cursor, editor.length)).x - editor.leftPadding - textIndent);
         if (f.contentX > min)
             f.contentX = Math.max(0, min);
     }
@@ -875,7 +879,7 @@ ApplicationWindow {
                 x: 8
                 y: 4
                 // Room beside the text for the scroll bar, when there is one.
-                width: label.width + (contentHeight > height ? bar.width + 4 : 0)
+                width: label.width + (contentHeight > height ? scrollBar.width + 4 : 0)
                 height: Math.min(label.height, hover.maxHeight - 8)
                 contentWidth: label.width
                 contentHeight: label.height
@@ -883,14 +887,13 @@ ApplicationWindow {
                 clip: true
 
                 ScrollBar.vertical: ScrollBar {
-                    id: bar
+                    id: scrollBar
                 }
 
                 WheelHandler {
                     onWheel: event => {
                         const dy = event.pixelDelta.y || event.angleDelta.y / 120 * 3 * root.lineHeight;
-                        scroller.contentY = Math.max(0, Math.min(scroller.contentHeight - scroller.height,
-                            scroller.contentY - dy));
+                        scroller.contentY = Math.max(0, Math.min(scroller.contentHeight - scroller.height, scroller.contentY - dy));
                     }
                 }
 
@@ -1227,7 +1230,9 @@ ApplicationWindow {
 
     Component.onCompleted: {
         if (isMac) {
-            macMenuBar.createObject(root, { window: root });
+            macMenuBar.createObject(root, {
+                window: root
+            });
         } else {
             root.menuBar = windowMenuBar.createObject(root);
             editor.background = plainBackground.createObject(editor);

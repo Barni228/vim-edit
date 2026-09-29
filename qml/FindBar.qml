@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Effects
@@ -11,7 +13,7 @@ import QtQuick.Shapes
 FocusScope {
     id: bar
 
-    required property Item editor
+    required property TextArea editor
     required property var vim
 
     // Follows the editor's zoom (Cmd+ and Cmd-), like every text in the app.
