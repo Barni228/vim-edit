@@ -2,6 +2,7 @@
 
 #include <QtCore/QObject>
 #include <QtCore/QString>
+#include <QtCore/QStringList>
 
 // Installs an application-wide event filter that turns QFileOpenEvent
 // (sent by macOS when a file is opened via Finder / "Open With") into a
@@ -28,3 +29,8 @@ void setClipboardText(const QString& text, const QString& data);
 // margin adds to each line's height; Qt puts a fixed-height line's baseline
 // at 4/5 of it, and the margin lets the text sit higher in the whole line.
 void setLineFormat(QObject* textDocument, double height, double bottomMargin);
+
+// The installed font families whose text characters are all the same width,
+// in alphabetical order: the fonts the editor offers. It loads every font,
+// which takes a moment (a few hundred ms for a few hundred families).
+QStringList monospaceFamilies();

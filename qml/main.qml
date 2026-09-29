@@ -23,9 +23,16 @@ ApplicationWindow {
     readonly property int defaultFontSize: 16
     readonly property int minFontSize: 6
     readonly property int maxFontSize: 72
+    readonly property string defaultFontFamily: isMac ? "Menlo" : "Consolas"
+    // The fonts the editor offers: the installed monospaced ones. Finding
+    // them loads every font, which takes a moment, so it waits until
+    // they're needed (loadFontFamilies).
+    property var fontFamilies: []
     // The settings in use: the saved ones, unless changed for this session
-    // (see settings.keepChanges). Vim keeps the font size for :set fs.
+    // (see settings.keepChanges). Vim keeps the font size and family for
+    // :set fs and :set gfn.
     property alias fontSize: vim.fontSize
+    property alias fontFamily: vim.fontFamily
     // "system", "light" or "dark".
     property string theme: settings.theme
     // Every line is this tall, even one with an emoji (see fixLineFormat).
@@ -62,6 +69,13 @@ ApplicationWindow {
     function saveAs() {
         quitAfterSave = false;
         saveDialog.open();
+    }
+
+    function loadFontFamilies() {
+        if (fontFamilies.length)
+            return;
+        const families = doc.monospaceFamilies();
+        fontFamilies = families.includes(defaultFontFamily) ? families : families.concat(defaultFontFamily).sort((a, b) => a.localeCompare(b));
     }
 
     function zoom(step) {
@@ -105,6 +119,7 @@ ApplicationWindow {
         id: settings
 
         property int fontSize: root.defaultFontSize
+        property string fontFamily: root.defaultFontFamily
         property string theme: "system"
         property bool number: false
         property bool relativeNumber: false
@@ -113,12 +128,12 @@ ApplicationWindow {
         // Turning it on saves what's in use, as if it had been on.
         onKeepChangesChanged: {
             if (keepChanges)
-                ["fontSize", "number", "relativeNumber"].forEach(name => root.keepChange(name));
+                ["fontSize", "fontFamily", "number", "relativeNumber"].forEach(name => root.keepChange(name));
         }
     }
 
-    // Changes a setting now and saves it (fontSize, theme, number or
-    // relativeNumber).
+    // Changes a setting now and saves it (fontSize, fontFamily, theme,
+    // number or relativeNumber).
     function changeSetting(name, value) {
         (name in settingOwners ? settingOwners[name] : root)[name] = value;
         settings[name] = value;
@@ -137,6 +152,7 @@ ApplicationWindow {
     }
 
     onFontSizeChanged: keepChange("fontSize")
+    onFontFamilyChanged: keepChange("fontFamily")
 
     Connections {
         target: vim
@@ -205,7 +221,11 @@ ApplicationWindow {
         defaultFontSize: root.defaultFontSize
         minFontSize: root.minFontSize
         maxFontSize: root.maxFontSize
+        fontFamily: settings.fontFamily
+        defaultFontFamily: root.defaultFontFamily
+        fontFamilies: root.fontFamilies
 
+        onFontFamiliesNeeded: root.loadFontFamilies()
         onWriteRequested: quit => root.save(quit)
         onQuitRequested: (force, confirm) => {
             if (force || !root.modified)
@@ -285,7 +305,7 @@ ApplicationWindow {
                 return spans;
             }
 
-            font.family: root.isMac ? "Menlo" : "Consolas"
+            font.family: root.fontFamily
             font.pointSize: root.fontSize
             textFormat: TextEdit.PlainText
             wrapMode: TextEdit.NoWrap
@@ -608,9 +628,13 @@ ApplicationWindow {
                     for (const d of found) {
                         const lineEnd = vim.lineEnd(t, d.start), prev = shown[shown.length - 1];
                         if (!prev || prev.lineEnd !== lineEnd)
-                            shown.push(Object.assign({ lineEnd }, d));
+                            shown.push(Object.assign({
+                                lineEnd
+                            }, d));
                         else if (prev.severity !== "error" && d.severity === "error")
-                            shown[shown.length - 1] = Object.assign({ lineEnd }, d);
+                            shown[shown.length - 1] = Object.assign({
+                                lineEnd
+                            }, d);
                     }
                     // Recompute every rectangle, as for `highlights`.
                     spans = [];
@@ -625,7 +649,10 @@ ApplicationWindow {
                     for (let i = 0; i < messageRepeater.count; i++) {
                         const m = messageRepeater.itemAt(i), cell = editor.cellAt(messages[i].lineEnd);
                         if (m && p.x >= m.x && p.x < m.x + m.width && p.y >= cell.y && p.y < cell.y + cell.height)
-                            return { start: messages[i].start, rect: Qt.rect(m.x, cell.y, m.width, cell.height) };
+                            return {
+                                start: messages[i].start,
+                                rect: Qt.rect(m.x, cell.y, m.width, cell.height)
+                            };
                     }
                     return null;
                 }
@@ -956,7 +983,10 @@ ApplicationWindow {
                     continue;
                 const a = editor.cellAt(target.start), b = editor.cellAt(target.end);
                 if (p.x >= a.x && p.x < b.x && p.y >= a.y && p.y < a.y + a.height)
-                    return { start: target.start, rect: Qt.rect(a.x, a.y, b.x - a.x, a.height) };
+                    return {
+                        start: target.start,
+                        rect: Qt.rect(a.x, a.y, b.x - a.x, a.height)
+                    };
             }
             return diagnostics.messageUnder(p);
         }
@@ -1199,7 +1229,6 @@ ApplicationWindow {
         }
         onRejected: root.quitAfterSave = false
     }
-
 
     MessageDialog {
         id: errorDialog

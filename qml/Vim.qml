@@ -38,6 +38,12 @@ QtObject {
     property int defaultFontSize: 16
     property int minFontSize: 1
     property int maxFontSize: 999
+    // :set guifont, a font family (the view sets the editor's font), with
+    // its default and the families it can be (any, if empty), which
+    // fontFamiliesNeeded asks the view to fill in.
+    property string fontFamily: ""
+    property string defaultFontFamily: ""
+    property var fontFamilies: []
 
     readonly property bool isVisual: mode === "visual" || mode === "visualLine" || mode === "visualBlock"
     readonly property string cursorShape: mode === "insert" ? "bar"
@@ -51,6 +57,7 @@ QtObject {
         })[mode] || "", cursors.length ? "MULTI CURSOR" : "", recording ? "recording @" + recording : ""]
         .filter(s => s).join(" ")
 
+    signal fontFamiliesNeeded
     signal writeRequested(bool quit)
     // `confirm` (:confirm q): ask whether to save unsaved changes instead
     // of failing.
@@ -2314,25 +2321,30 @@ QtObject {
     // The options :set knows: full name, short name, property, default,
     // and for a number option its range. fontsize isn't vim's (gvim has
     // guifont); its short name is vim's for fsync, which VimEdit hasn't.
+    // guifont is only the family (gvim's also takes a size, like Menlo:h14).
     readonly property var options: [
         { name: "fontsize", short: "fs", property: "fontSize", default: defaultFontSize,
             min: minFontSize, max: maxFontSize },
+        { name: "guifont", short: "gfn", property: "fontFamily", default: defaultFontFamily },
         { name: "number", short: "nu", property: "number", default: false },
         { name: "relativenumber", short: "rnu", property: "relativeNumber", default: false }
     ]
 
-    // An option as :set shows it: "  nu", "nonu" or "  fs=16".
+    // An option as :set shows it: "  nu", "nonu", "  fs=16" or
+    // "  gfn=Fira Code".
     function optionLabel(o) {
         const value = vim[o.property];
-        return typeof value === "number" ? "  " + o.name + "=" + value : (value ? "  " : "no") + o.name;
+        return typeof value === "boolean" ? (value ? "  " : "no") + o.name : "  " + o.name + "=" + value;
     }
 
-    // :set with args like "nu", "nonu", "nu!", "invnu", "nu?" or "nu&", and
-    // for a number option "fs=16" (or "fs:16"), "fs+=2", "fs-=2", "fs^=2"
-    // (multiplies), "fs" or "fs?" (shows it) and "fs&". No args lists the
-    // options that aren't at their default.
+    // :set with args like "nu", "nonu", "nu!", "invnu", "nu?" or "nu&", for
+    // a number option "fs=16" (or "fs:16"), "fs+=2", "fs-=2", "fs^=2"
+    // (multiplies), "fs" or "fs?" (shows it) and "fs&", and for a string
+    // option "gfn=Fira\ Code" (a backslash escapes a space; empty is the
+    // default), "gfn", "gfn?" and "gfn&". No args lists the options that
+    // aren't at their default.
     function setOptions(args) {
-        const words = args.split(/\s+/).filter(w => w);
+        const words = args.match(/(?:\\.|\S)+/g) || [];
         const shown = [];
         if (!words.length)
             shown.push(...options.filter(o => vim[o.property] !== o.default).map(optionLabel));
@@ -2344,15 +2356,27 @@ QtObject {
                 return;
             }
             const prefix = m[1] || "", suffix = m[3] || "", op = m[4] || "";
-            const isNumber = typeof o.default === "number";
-            if (prefix && (suffix || isNumber) || op && !isNumber || isNumber && suffix === "!") {
+            const isNumber = typeof o.default === "number", isString = typeof o.default === "string";
+            if (prefix && (suffix || isNumber || isString) || op && !isNumber && !isString
+                    || (isNumber || isString) && suffix === "!" || isString && op.length > 1) {
                 showError("E474: Invalid argument: " + w);
                 return;
             }
-            if (suffix === "?" || isNumber && !suffix && !op) {
+            if (suffix === "?" || (isNumber || isString) && !suffix && !op) {
                 shown.push(optionLabel(o));
             } else if (suffix === "&") {
                 vim[o.property] = o.default;
+            } else if (isString) {
+                const value = m[5].replace(/\\(.)/g, "$1");
+                if (value)
+                    fontFamiliesNeeded();
+                const family = value ? fontFamilies.find(f => f.toLowerCase() === value.toLowerCase())
+                    || (fontFamilies.length ? "" : value) : o.default;
+                if (!family) {
+                    showError("E596: Invalid font(s): " + w);
+                    return;
+                }
+                vim[o.property] = family;
             } else if (op) {
                 if (!/^-?\d+$/.test(m[5])) {
                     showError("E521: Number required after =: " + w);

@@ -5,6 +5,8 @@ pub mod ffi {
         type QObject = cxx_qt::QObject;
         include!("cxx-qt-lib/qstring.h");
         type QString = cxx_qt_lib::QString;
+        include!("cxx-qt-lib/qstringlist.h");
+        type QStringList = cxx_qt_lib::QStringList;
 
         include!("platform.h");
 
@@ -32,6 +34,10 @@ pub mod ffi {
         /// Writes the system clipboard, with VimEdit-only `data` if not empty.
         #[cxx_name = "setClipboardText"]
         fn set_clipboard_text(text: &QString, data: &QString);
+
+        /// The installed monospaced font families.
+        #[cxx_name = "monospaceFamilies"]
+        fn monospace_families() -> QStringList;
 
         /// Gives every line of a QQuickTextDocument the same height, plus a
         /// margin below it.

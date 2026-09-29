@@ -13,7 +13,8 @@ VimEdit: a plain-text editor in Rust + Qt 6 via cxx-qt 0.10, with the UI in QML.
 - `qml/Vim.qml`: the vim emulation (modes, motions, operators, registers, undo, `:` and
   `/` command line). It drives the `TextArea` through `insert`/`remove`/`select`.
 - `qml/FindBar.qml`: the VS Code-style find and replace bar (Cmd+F, Cmd+Option+F).
-- `qml/SettingsWindow.qml`: the Settings window (Cmd+,): font size, line numbers, theme.
+- `qml/SettingsWindow.qml`: the Settings window (Cmd+,): font, font size, line numbers,
+  theme.
 - `qml/ConfirmDialog.qml`: the `:confirm` question, a box over the editor with
   vim's [Y]es/(N)o/(C)ancel (keys `y`, `n`, `c`/Esc; Left/Right move the
   highlight, Enter answers it) and selectable text.
@@ -158,24 +159,25 @@ VimEdit: a plain-text editor in Rust + Qt 6 via cxx-qt 0.10, with the UI in QML.
   The gutter has the editor's background color. Only visible lines get a row.
 - **Settings**: `settings` (a QtCore `Settings` in `main.qml`) holds the
   saved values; `root.fontSize` (an alias of `vim.fontSize`, for `:set fs`),
-  `root.theme` and `vim.number`/`relativeNumber` are the ones in use, bound to
+  `root.fontFamily` (an alias of `vim.fontFamily`, for `:set gfn`), `root.theme`
+  and `vim.number`/`relativeNumber` are the ones in use, bound to
   them at startup. The Settings window shows the ones in use and changes both
-  (`changeSetting`). The zoom and `:set fs`/`nu`/`rnu` change only the ones in
+  (`changeSetting`). The zoom and `:set fs`/`gfn`/`nu`/`rnu` change only the ones in
   use, and `keepChange` saves them when `settings.keepChanges` is on (the
   "Zoom and :set" setting, off by default). The theme sets
   `Application.styleHints.colorScheme` (Qt 6.8+), which also switches the
   palette, title bar and menus; "system" unsets it. The window's size follows
   the zoom, so it isn't resizable.
-- **Help**: `HelpPanel.sections` is the `:help` text, with the topics each
-  section answers (`:h macros`). When adding a feature or key that isn't
-  standard vim or obvious, add it there. Wrapped text settles over the first
-  frames, so `:h topic` keeps scrolling to its section as the layout changes,
-  until the user scrolls. Each text is a read-only `TextEdit` (`HelpText`)
-  that selects on its own (selecting one clears the last, and a
-  `PointHandler` on top clears it on a press elsewhere, only watching the
-  press; a `MouseArea` there would show its arrow over the I-beam). The
-  keys stay with the help, which forwards Copy. A drag selects, so its
-  `Flickable` isn't interactive and a `WheelHandler` scrolls it.
+- **Fonts**: the editor offers only monospaced fonts (`Document.monospaceFamilies`),
+  since visual block and the overlays count columns. A font counts if its
+  Latin text has one width, not by `QFontDatabase::isFixedPitch`, which
+  leaves out Nerd Fonts with wide icons and is slower. Either way it loads
+  every font (a few hundred ms), so `root.fontFamilies` is filled on first
+  use (`loadFontFamilies`: the Settings font list, or `:set gfn` via
+  `vim.fontFamiliesNeeded`). The Settings font picker is a field that
+  searches, with the list in a `Popup.Window` (so the Settings window
+  doesn't cut it off); the field keeps the keys, but the popup takes Esc,
+  so it closes on Esc itself.
 - Don't make a QML binding depend on something by reading it as a bare statement
   (`editor.revision;`): the app's QML is compiled ahead of time, which can drop it,
   though `qmltestrunner` keeps it. Use the value, e.g. `TextMetrics.advanceWidth`

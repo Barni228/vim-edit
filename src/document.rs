@@ -1,7 +1,7 @@
 use std::pin::Pin;
 
 use cxx_qt::casting::Upcast;
-use cxx_qt_lib::{QString, QUrl};
+use cxx_qt_lib::{QString, QStringList, QUrl};
 
 use crate::platform;
 
@@ -10,6 +10,8 @@ pub mod qobject {
     unsafe extern "C++" {
         include!("cxx-qt-lib/qstring.h");
         type QString = cxx_qt_lib::QString;
+        include!("cxx-qt-lib/qstringlist.h");
+        type QStringList = cxx_qt_lib::QStringList;
         include!("cxx-qt-lib/qurl.h");
         type QUrl = cxx_qt_lib::QUrl;
     }
@@ -49,6 +51,10 @@ pub mod qobject {
 
         #[qinvokable]
         fn set_clipboard_text(self: &Document, text: &QString, data: &QString);
+
+        /// The installed monospaced font families (the fonts the editor offers).
+        #[qinvokable]
+        fn monospace_families(self: &Document) -> QStringList;
 
         /// Gives every line of a TextEdit's `textDocument` the same height,
         /// plus a margin below it.
@@ -117,6 +123,10 @@ impl qobject::Document {
 
     fn set_clipboard_text(&self, text: &QString, data: &QString) {
         platform::ffi::set_clipboard_text(text, data);
+    }
+
+    fn monospace_families(&self) -> QStringList {
+        platform::ffi::monospace_families()
     }
 
     /// # Safety

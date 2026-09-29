@@ -4,6 +4,8 @@
 #include <QtCore/QMimeData>
 #include <QtCore/QTranslator>
 #include <QtGui/QClipboard>
+#include <QtGui/QFontDatabase>
+#include <QtGui/QFontMetricsF>
 #include <QtGui/QFileOpenEvent>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QTextBlockFormat>
@@ -121,4 +123,37 @@ setLineFormat(QObject* textDocument, double height, double bottomMargin)
   format.setLineHeight(height, QTextBlockFormat::FixedHeight);
   format.setBottomMargin(bottomMargin);
   cursor.mergeBlockFormat(format);
+}
+
+namespace {
+
+// Whether a family has Latin letters, digits and punctuation, all the same
+// width. Not QFontDatabase::isFixedPitch: a font says it's monospaced only
+// if every glyph is, so Nerd Fonts with wide icons (all but the "Mono"
+// ones) don't, though their text is. It's also slower, since it (like
+// writingSystems) loads every style of the family.
+bool
+hasFixedWidthText(const QString& family)
+{
+  QFont font(family);
+  font.setPixelSize(40);
+  font.setStyleStrategy(QFont::NoFontMerging); // no widths from other fonts
+  const QFontMetricsF metrics(font);
+  const qreal width = metrics.horizontalAdvance(QLatin1Char('M'));
+  for (const QChar ch : QStringLiteral("iMW0.,_|"))
+    if (!metrics.inFont(ch) || !qFuzzyCompare(metrics.horizontalAdvance(ch), width))
+      return false;
+  return width > 0;
+}
+
+} // namespace
+
+QStringList
+monospaceFamilies()
+{
+  QStringList families;
+  for (const auto& family : QFontDatabase::families())
+    if (!QFontDatabase::isPrivateFamily(family) && hasFixedWidthText(family))
+      families.append(family);
+  return families;
 }

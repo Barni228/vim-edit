@@ -32,12 +32,14 @@ Popup {
     readonly property var sections: [
         {
             title: "Options (:set)",
-            tags: ["set", "se", "options", "option", "fontsize", "fs", "number", "nu",
-                "relativenumber", "rnu"],
+            tags: ["set", "se", "options", "option", "fontsize", "fs", "guifont", "gfn", "font",
+                "number", "nu", "relativenumber", "rnu"],
             intro: "`:set` with no arguments lists the options that aren't at their default. "
                 + "Several can be set at once: `:set nu rnu fs=18`.",
             rows: [
                 ["fontsize, fs", "Font size in points, 6 to 72. Default 16."],
+                ["guifont, gfn", "Font: an installed monospaced one, in any case. Default "
+                    + (isMac ? "Menlo" : "Consolas") + "."],
                 ["number, nu", "Line numbers."],
                 ["relativenumber, rnu", "Line numbers counted from the cursor's line. With `nu` too, "
                     + "the cursor's line shows its own number."]
@@ -62,6 +64,16 @@ Popup {
                 [":set fs+=2  fs-=2  fs^=2", "Add, subtract, multiply."],
                 [":set fs  :set fs?", "Show it: `fontsize=16`."],
                 [":set fs&", "Back to the default (16)."]
+            ]
+        },
+        {
+            title: "Setting the font",
+            tags: [],
+            rows: [
+                [":set gfn=Monaco", "Set it."],
+                [":set gfn=Fira\\ Code", "A backslash before a space."],
+                [":set gfn  :set gfn?", "Show it: `guifont=Monaco`."],
+                [":set gfn&  :set gfn=", "Back to the default."]
             ],
             note: "Zoom and `:set` changes last until VimEdit quits, unless Settings (" + cmdKey
                 + ",) > Zoom and :set is Change Settings."
