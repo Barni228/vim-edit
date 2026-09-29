@@ -52,7 +52,9 @@ QtObject {
         .filter(s => s).join(" ")
 
     signal writeRequested(bool quit)
-    signal quitRequested(bool force)
+    // `confirm` (:confirm q): ask whether to save unsaved changes instead
+    // of failing.
+    signal quitRequested(bool force, bool confirm)
     // gh: show what's under the cursor at `at` (a hidden-text 💩's text, or
     // a warning or error), if anything.
     signal hoverRequested(int at)
@@ -1000,7 +1002,7 @@ QtObject {
             writeRequested(true);
             break;
         case "ZQ":
-            quitRequested(true);
+            quitRequested(true, false);
             break;
         case "zz":
         case "zt":
@@ -2269,9 +2271,18 @@ QtObject {
         moveBy({ count: 0, motion: { name: "n" } });
     }
 
-    function runEx(c) {
+    // `confirm` is set by :confirm, which runs the command after it.
+    function runEx(c, confirm) {
         if (c === "")
             return;
+        if (/^conf(i|ir|irm)?(\s|$)/.test(c)) {
+            const rest = c.replace(/^\S+\s*/, "");
+            if (rest)
+                runEx(rest, true);
+            else
+                showError("E471: Argument required");
+            return;
+        }
         if (/^\d+$/.test(c) || c === "$") {
             const t = editor.text;
             const line = c === "$" ? countLines(t) : Math.max(1, Math.min(parseInt(c, 10), countLines(t)));
@@ -2285,9 +2296,9 @@ QtObject {
         else if (["wq", "x", "wq!", "x!", "xit", "exit"].includes(c))
             writeRequested(true);
         else if (["q", "quit", "qa", "qall"].includes(c))
-            quitRequested(false);
+            quitRequested(false, !!confirm);
         else if (["q!", "quit!", "qa!", "qall!"].includes(c))
-            quitRequested(true);
+            quitRequested(true, false);
         else if (["noh", "nohl", "nohlsearch"].includes(c)) {
             highlightPattern = "";
             highlightsCleared();

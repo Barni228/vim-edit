@@ -14,6 +14,9 @@ VimEdit: a plain-text editor in Rust + Qt 6 via cxx-qt 0.10, with the UI in QML.
   `/` command line). It drives the `TextArea` through `insert`/`remove`/`select`.
 - `qml/FindBar.qml`: the VS Code-style find and replace bar (Cmd+F, Cmd+Option+F).
 - `qml/SettingsWindow.qml`: the Settings window (Cmd+,): font size, line numbers, theme.
+- `qml/ConfirmDialog.qml`: the `:confirm` question, a box over the editor with
+  vim's [Y]es/(N)o/(C)ancel (keys `y`, `n`, `c`/Esc; Left/Right move the
+  highlight, Enter answers it) and selectable text.
 - `qml/HelpPanel.qml`: `:help` (`:h topic`), a box over the editor listing what isn't
   obvious (`:set` forms, search, registers, multiple cursors, hidden text, keys).
 - `scripts/`: `bundle-macos.sh` (makes the `.app`), `package-macos.sh` (makes the `.dmg`),
@@ -120,6 +123,12 @@ VimEdit: a plain-text editor in Rust + Qt 6 via cxx-qt 0.10, with the UI in QML.
   `targetAt` finds either, `targetUnder` also finds the message after the
   line (the box then points at it), and `gh` asks for whatever is under
   the cursor.
+- **Quitting**: `:q` with unsaved changes fails (E37); `:confirm q` asks
+  instead, in a `ConfirmDialog` rather than a `MessageDialog` (which is
+  native on macOS, can't use the editor's font or vim's keys, and warns that
+  the macOS style can't be customized). Saving a file that has no path
+  opens the Save dialog, so `root.save(quit)` sets `quitAfterSave` to quit
+  once it's saved (also for `:wq`).
 - **Find bar**: moving to a match moves vim's cursor to its start
   (`vim.jumpTo`, which leaves visual mode and breaks an insert); it doesn't
   select it. The current match is the one starting at the cursor

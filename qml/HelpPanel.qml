@@ -67,13 +67,15 @@ Popup {
         },
         {
             title: "Commands",
-            tags: ["commands", "command", "ex", "w", "write", "quit", "wq", "x", "noh", "nohlsearch",
-                "help", "h", "history"],
+            tags: ["commands", "command", "ex", "w", "write", "quit", "wq", "x", "confirm", "conf", "noh",
+                "nohlsearch", "help", "h", "history"],
             rows: [
                 [":w", "Save."],
                 [":wq  :x  ZZ", "Save and quit."],
                 [":q", "Quit, unless there are unsaved changes."],
                 [":q!  ZQ", "Quit without saving."],
+                [":conf q  :confirm q", "Quit, asking whether to save unsaved changes: `y`, `n`, or `c` (or "
+                    + "Esc) to cancel. Left and Right pick a choice for Enter."],
                 [":42  :$", "Go to line 42, or the last line."],
                 [":noh", "Clear the search highlights (so does Esc in normal mode)."],
                 [":h  :help [topic]", "This help, e.g. `:h set`, `:h search`, `:h macros`."],

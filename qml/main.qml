@@ -15,7 +15,11 @@ ApplicationWindow {
 
     readonly property bool isMac: Qt.platform.os === "osx"
     property string filePath: ""
+    readonly property string fileName: filePath ? filePath.split(/[\\/]/).pop() : "Untitled"
     property bool modified: false
+    // Quit once the Save dialog has saved the file (:wq, or Save in the
+    // :confirm q dialog, for a file that has no path yet).
+    property bool quitAfterSave: false
     readonly property int defaultFontSize: 16
     readonly property int minFontSize: 6
     readonly property int maxFontSize: 72
@@ -34,22 +38,29 @@ ApplicationWindow {
     width: 900
     height: 650
     visible: true
-    title: (filePath ? filePath.split(/[\\/]/).pop() : "Untitled") + (modified ? " •" : "") + " — VimEdit"
+    title: fileName + (modified ? " •" : "") + " — VimEdit"
 
     function openFile() {
         openDialog.open();
     }
 
-    function save() {
+    // Saves the file, asking for a path if it has none, then quits if
+    // `quit` is set and the save worked.
+    function save(quit) {
         if (!filePath) {
             saveAs();
+            quitAfterSave = !!quit;
             return;
         }
-        if (doc.saveFile(filePath, editor.text))
+        if (doc.saveFile(filePath, editor.text)) {
             modified = false;
+            if (quit)
+                Qt.quit();
+        }
     }
 
     function saveAs() {
+        quitAfterSave = false;
         saveDialog.open();
     }
 
@@ -145,6 +156,16 @@ ApplicationWindow {
         zoom: root.fontSize / root.defaultFontSize
     }
 
+    // :confirm q with unsaved changes.
+    ConfirmDialog {
+        id: confirmDialog
+
+        editor: editor
+        zoom: root.fontSize / root.defaultFontSize
+        onYes: root.save(true)
+        onNo: Qt.quit()
+    }
+
     SettingsWindow {
         id: settingsWindow
 
@@ -185,14 +206,12 @@ ApplicationWindow {
         minFontSize: root.minFontSize
         maxFontSize: root.maxFontSize
 
-        onWriteRequested: quit => {
-            root.save();
-            if (quit && !root.modified)
-                Qt.quit();
-        }
-        onQuitRequested: force => {
+        onWriteRequested: quit => root.save(quit)
+        onQuitRequested: (force, confirm) => {
             if (force || !root.modified)
                 Qt.quit();
+            else if (confirm)
+                confirmDialog.ask("Save changes to “" + root.fileName + "”?");
             else
                 vim.showError("E37: No write since last change (add ! to override)");
         }
@@ -1173,9 +1192,14 @@ ApplicationWindow {
             if (doc.saveFile(path, editor.text)) {
                 root.filePath = path;
                 root.modified = false;
+                if (root.quitAfterSave)
+                    Qt.quit();
             }
+            root.quitAfterSave = false;
         }
+        onRejected: root.quitAfterSave = false
     }
+
 
     MessageDialog {
         id: errorDialog

@@ -34,9 +34,9 @@ text and other keys. `:h topic` goes straight to one, e.g. `:h set` or
 - Macros: `q{a-z}` records, `q` stops (`qA` appends), `@{a-z}` runs, `@@` runs
   the last one again and `@:` repeats the last `:` command. A macro stops at the
   first command that fails, so recursive macros end on their own.
-- `/`, `?`, `:w`, `:q`, `:q!`, `:wq`, `:x`, `:<line>`, `ZZ`, `ZQ`, `:noh`, `:help`.
-  Up and Down on the command line go through earlier commands or searches that
-  start with what you've typed.
+- `/`, `?`, `:w`, `:q`, `:q!`, `:confirm q`, `:wq`, `:x`, `:<line>`, `ZZ`, `ZQ`,
+  `:noh`, `:help`. Up and Down on the command line go through earlier commands
+  or searches that start with what you've typed.
 - Search patterns are JavaScript regular expressions, not vim's, and match case
   (`\bword\b`, `(a|b)+`). While you type a search, matches are highlighted and
   the view scrolls to the one Enter would jump to. They stay highlighted until
