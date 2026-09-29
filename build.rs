@@ -2,7 +2,7 @@ use cxx_qt_build::{CxxQtBuilder, QmlModule};
 
 fn main() {
     CxxQtBuilder::new_qml_module(
-        QmlModule::new("VimEdit").qml_files(["qml/main.qml", "qml/Vim.qml"]),
+        QmlModule::new("VimEdit").qml_files(["qml/main.qml", "qml/Vim.qml", "qml/FindBar.qml"]),
     )
     .qt_module("Gui")
     .qt_module("Quick")

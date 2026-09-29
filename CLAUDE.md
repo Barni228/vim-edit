@@ -12,6 +12,7 @@ VimEdit: a plain-text editor in Rust + Qt 6 via cxx-qt 0.10, with the UI in QML.
   dialogs and menus.
 - `qml/Vim.qml`: the vim emulation (modes, motions, operators, registers, undo, `:` and
   `/` command line). It drives the `TextArea` through `insert`/`remove`/`select`.
+- `qml/FindBar.qml`: the VS Code-style find and replace bar (Cmd+F, Cmd+Option+F).
 - `scripts/`: `bundle-macos.sh` (makes the `.app`), `package-macos.sh` (makes the `.dmg`),
   `package-windows.ps1` (runs windeployqt, then builds the Inno Setup installer).
 - `packaging/`: `Info.plist` (with `@VERSION@` placeholder), `installer.iss`, and a
@@ -102,6 +103,18 @@ VimEdit: a plain-text editor in Rust + Qt 6 via cxx-qt 0.10, with the UI in QML.
   the editor, which forwards Copy to it. Any other key, a scroll or an edit
   hides it; one the mouse opened also hides 300 ms after the pointer is on
   neither the 💩 nor the box (and isn't dragging a selection).
+- **Find bar**: moving to a match moves vim's cursor to its start
+  (`vim.jumpTo`, which leaves visual mode and breaks an insert); it doesn't
+  select it. The current match is the one starting at the cursor
+  (`currentStart`), however the cursor got there (e.g. an undo). Its matches take over the search highlights while it's open;
+  Esc in normal mode (`highlightsCleared`) closes it. Replace All is one
+  `replaceRange` over the first to last match, keeping hidden text between
+  matches. On Windows, Ctrl+F is Find, not vim's page down.
+- **Zoom**: every text in the app grows and shrinks with View > Zoom
+  (Cmd+ / Cmd- / Cmd+0), not just the editor: the status line, the hover box,
+  the find bar and its tooltips. Text in the editor's font uses
+  `editor.font`; other UI (like `FindBar`) scales its sizes by `zoom`
+  (`root.fontSize / root.defaultFontSize`). New UI must do the same.
 - **Line height**: emoji come from a taller font and would make their line
   taller, so `fixLineHeight` gives every block a fixed height (a block format,
   reapplied after setting `editor.text`). Qt's selection and `positionToRectangle`

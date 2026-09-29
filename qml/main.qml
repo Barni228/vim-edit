@@ -349,15 +349,17 @@ ApplicationWindow {
                 }
             }
 
-            // Search matches: the search being typed, or the last one until
-            // Esc. Like the block cursor below, they refresh after an edit
-            // finishes rather than halfway through one.
+            // Search matches: the search being typed, else the find bar's
+            // while it's open, else the last search until Esc. Like the
+            // block cursor below, they refresh after an edit finishes rather
+            // than halfway through one.
             Item {
                 id: highlights
 
                 property var spans: []
                 readonly property var inputs: [editor.revision, vim.commandLine, vim.highlightPattern,
-                    vim.searchTarget, scrollView.contentItem.contentY, scrollView.contentItem.height,
+                    vim.searchTarget, findBar.active, findBar.matches, findBar.current,
+                    scrollView.contentItem.contentY, scrollView.contentItem.height,
                     editor.contentWidth, editor.contentHeight] // these follow font size changes
 
                 function refresh() {
@@ -365,7 +367,8 @@ ApplicationWindow {
                     // the old ones, but after a relayout their rectangles must
                     // be recomputed, so always start from an empty model.
                     spans = [];
-                    spans = vim.searchHighlights();
+                    spans = vim.typedSearch() === null && findBar.active ? findBar.highlightSpans()
+                        : vim.searchHighlights();
                 }
 
                 onInputsChanged: Qt.callLater(refresh)
@@ -382,7 +385,7 @@ ApplicationWindow {
                         y: startRect.y
                         width: endRect.x - startRect.x
                         height: startRect.height
-                        color: modelData.match === vim.highlightTarget ? "#ff9f1a" : "#f5d547"
+                        color: modelData.current ? "#ff9f1a" : "#f5d547"
 
                         // Redraw the matched text on top, dark on the highlight.
                         Text {
@@ -471,6 +474,22 @@ ApplicationWindow {
                     textFormat: Text.PlainText
                 }
             }
+        }
+    }
+
+    // Clips the find bar as it slides in from above the editor.
+    Item {
+        anchors.fill: scrollView
+        clip: true
+
+        FindBar {
+            id: findBar
+
+            anchors.right: parent.right
+            anchors.rightMargin: 16 // clear of the scroll bar
+            zoom: root.fontSize / root.defaultFontSize
+            editor: editor
+            vim: vim
         }
     }
 
@@ -799,6 +818,27 @@ ApplicationWindow {
                     shortcut: "Ctrl+J" // Qt maps Ctrl to Cmd
                     onTriggered: root.toggleHidden()
                 }
+                Platform.MenuSeparator {}
+                Platform.MenuItem {
+                    text: qsTr("Find")
+                    shortcut: StandardKey.Find
+                    onTriggered: findBar.open(false)
+                }
+                Platform.MenuItem {
+                    text: qsTr("Replace")
+                    shortcut: "Ctrl+Alt+F" // Cmd+Option+F, as in VS Code
+                    onTriggered: findBar.open(true)
+                }
+                Platform.MenuItem {
+                    text: qsTr("Find Next")
+                    shortcut: StandardKey.FindNext
+                    onTriggered: findBar.findNext(1)
+                }
+                Platform.MenuItem {
+                    text: qsTr("Find Previous")
+                    shortcut: StandardKey.FindPrevious
+                    onTriggered: findBar.findNext(-1)
+                }
             }
             Platform.Menu {
                 title: qsTr("View")
@@ -866,6 +906,27 @@ ApplicationWindow {
                     text: qsTr("&Hide or Reveal Text")
                     shortcut: "Ctrl+J"
                     onTriggered: root.toggleHidden()
+                }
+                MenuSeparator {}
+                Action {
+                    text: qsTr("&Find")
+                    shortcut: StandardKey.Find
+                    onTriggered: findBar.open(false)
+                }
+                Action {
+                    text: qsTr("&Replace")
+                    shortcut: StandardKey.Replace // Ctrl+H, as in VS Code
+                    onTriggered: findBar.open(true)
+                }
+                Action {
+                    text: qsTr("Find &Next")
+                    shortcut: StandardKey.FindNext
+                    onTriggered: findBar.findNext(1)
+                }
+                Action {
+                    text: qsTr("Find &Previous")
+                    shortcut: StandardKey.FindPrevious
+                    onTriggered: findBar.findNext(-1)
                 }
             }
             Menu {

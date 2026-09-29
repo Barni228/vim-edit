@@ -46,6 +46,8 @@ QtObject {
     signal quitRequested(bool force)
     // gh on a hidden-text 💩: show its text at the 💩 at `at`.
     signal hoverRequested(int at)
+    // Esc in normal mode, or :noh: search highlights should go.
+    signal highlightsCleared()
 
     readonly property bool isMac: Qt.platform.os === "osx"
     readonly property var operators: ["d", "c", "y", ">", "<", "g~", "gu", "gU", "g?"]
@@ -147,19 +149,7 @@ QtObject {
         if (!isVisual && mode !== "insert")
             message = "";
         if (event.matches(StandardKey.Undo) || event.matches(StandardKey.Redo)) {
-            const insertish = mode === "insert" || mode === "replace";
-            if (insertish)
-                breakInsert();
-            if (isVisual) {
-                setMode("normal");
-                setCursor(clampNormal(editor.text, cursor));
-            }
-            if (event.matches(StandardKey.Undo))
-                undo(1);
-            else
-                redo(1);
-            if (insertish)
-                beginChange();
+            nativeUndo(event.matches(StandardKey.Redo));
             return true;
         }
         if (mode === "insert") {
@@ -295,6 +285,46 @@ QtObject {
         commitChange();
         if (mode === "insert" || mode === "replace")
             beginChange();
+    }
+
+    // Cmd+Z / Cmd+Shift+Z, in any mode (also from the find bar).
+    function nativeUndo(isRedo) {
+        if (commandLine !== "")
+            commandLineKey("<Esc>");
+        const insertish = mode === "insert" || mode === "replace";
+        if (insertish)
+            breakInsert();
+        if (isVisual) {
+            setMode("normal");
+            setCursor(clampNormal(editor.text, cursor));
+        }
+        if (isRedo)
+            redo(1);
+        else
+            undo(1);
+        if (insertish)
+            beginChange();
+    }
+
+    // Moves the cursor to p from outside vim (the find bar): back to one
+    // cursor, out of visual mode, and a new undo step in insert mode.
+    function jumpTo(p) {
+        if (commandLine !== "")
+            commandLineKey("<Esc>");
+        keys = [];
+        pendingKeys = "";
+        awaitingReplaceChar = false;
+        clearCursors();
+        if (isVisual)
+            setMode("normal");
+        if (mode === "insert" || mode === "replace") {
+            breakInsert();
+            replaceStack = [];
+        }
+        const t = editor.text;
+        p = mode === "normal" ? clampNormal(t, p) : Math.max(0, Math.min(p, t.length));
+        setCursor(p);
+        wantCol = column(t, p);
     }
 
     function positionLabel() {
@@ -965,6 +995,7 @@ QtObject {
         case "<Esc>":
             highlightPattern = "";
             cursors = [];
+            highlightsCleared();
             break;
         case "gv":
             if (lastVisual) {
@@ -2226,8 +2257,10 @@ QtObject {
             quitRequested(false);
         else if (["q!", "quit!", "qa!", "qall!"].includes(c))
             quitRequested(true);
-        else if (["noh", "nohl", "nohlsearch"].includes(c))
+        else if (["noh", "nohl", "nohlsearch"].includes(c)) {
             highlightPattern = "";
+            highlightsCleared();
+        }
         else
             showError("E492: Not an editor command: " + c);
     }
@@ -2686,40 +2719,48 @@ QtObject {
     }
 
     // Matches of the search being typed (or else of the last search, until
-    // it's cleared) that fall in the visible lines, split into one
-    // { start, end, match } span per line, where match is where it starts.
+    // it's cleared) that fall in the visible lines, as highlightSpans.
     function searchHighlights() {
         const typed = typedSearch();
         const pattern = typed !== null ? typed : highlightPattern;
         if (!pattern)
             return [];
         const t = editor.text;
-        let from = 0, to = t.length;
-        if (flickable) {
-            const top = Math.floor((flickable.contentY - editor.topPadding) / lineHeight);
-            const bottom = Math.ceil((flickable.contentY + flickable.height - editor.topPadding) / lineHeight);
-            from = lineToPos(t, Math.max(top, 0) + 1);
-            to = lineEnd(t, lineToPos(t, Math.max(bottom, 0) + 1));
-        }
+        const v = visibleRange(t);
         const re = searchRegExp(pattern);
         const spans = [];
-        re.lastIndex = from;
+        re.lastIndex = v.from;
         let m;
-        while ((m = re.exec(t)) !== null && m.index <= to && spans.length < 5000) {
+        while ((m = re.exec(t)) !== null && m.index <= v.to && spans.length < 5000) {
             if (m[0] === "") {
                 re.lastIndex++;
                 continue;
             }
-            const end = m.index + m[0].length;
-            for (let s = m.index; s < end;) {
-                const nl = t.indexOf("\n", s);
-                const e = nl < 0 || nl > end ? end : nl;
-                if (e > s)
-                    spans.push({ start: s, end: e, match: m.index });
-                s = e + 1;
-            }
+            addHighlight(t, spans, m.index, m.index + m[0].length, m.index === highlightTarget);
         }
         return spans;
+    }
+
+    // The part of the text [from, to] in the visible lines.
+    function visibleRange(t) {
+        if (!flickable)
+            return { from: 0, to: t.length };
+        const top = Math.floor((flickable.contentY - editor.topPadding) / lineHeight);
+        const bottom = Math.ceil((flickable.contentY + flickable.height - editor.topPadding) / lineHeight);
+        return { from: lineToPos(t, Math.max(top, 0) + 1), to: lineEnd(t, lineToPos(t, Math.max(bottom, 0) + 1)) };
+    }
+
+    // Adds the highlight of a match [start, end) to spans, split into one
+    // { start, end, current } span per line, where current means it's the
+    // match to show as the current one.
+    function addHighlight(t, spans, start, end, current) {
+        for (let s = start; s < end;) {
+            const nl = t.indexOf("\n", s);
+            const e = nl < 0 || nl > end ? end : nl;
+            if (e > s)
+                spans.push({ start: s, end: e, current: current });
+            s = e + 1;
+        }
     }
 
     function wordAt(t, p) {
