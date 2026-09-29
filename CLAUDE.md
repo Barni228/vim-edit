@@ -14,6 +14,8 @@ VimEdit: a plain-text editor in Rust + Qt 6 via cxx-qt 0.10, with the UI in QML.
   `/` command line). It drives the `TextArea` through `insert`/`remove`/`select`.
 - `qml/FindBar.qml`: the VS Code-style find and replace bar (Cmd+F, Cmd+Option+F).
 - `qml/SettingsWindow.qml`: the Settings window (Cmd+,): font size, line numbers, theme.
+- `qml/HelpPanel.qml`: `:help` (`:h topic`), a box over the editor listing what isn't
+  obvious (`:set` forms, search, registers, multiple cursors, hidden text, keys).
 - `scripts/`: `bundle-macos.sh` (makes the `.app`), `package-macos.sh` (makes the `.dmg`),
   `package-windows.ps1` (runs windeployqt, then builds the Inno Setup installer).
 - `packaging/`: `Info.plist` (with `@VERSION@` placeholder), `installer.iss`, and a
@@ -147,6 +149,11 @@ VimEdit: a plain-text editor in Rust + Qt 6 via cxx-qt 0.10, with the UI in QML.
   `Application.styleHints.colorScheme` (Qt 6.8+), which also switches the
   palette, title bar and menus; "system" unsets it. The window's size follows
   the zoom, so it isn't resizable.
+- **Help**: `HelpPanel.sections` is the `:help` text, with the topics each
+  section answers (`:h macros`). When adding a feature or key that isn't
+  standard vim or obvious, add it there. Wrapped text settles over the first
+  frames, so `:h topic` keeps scrolling to its section as the layout changes,
+  until the user scrolls.
 - Don't make a QML binding depend on something by reading it as a bare statement
   (`editor.revision;`): the app's QML is compiled ahead of time, which can drop it,
   though `qmltestrunner` keeps it. Use the value, e.g. `TextMetrics.advanceWidth`

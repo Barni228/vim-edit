@@ -57,6 +57,8 @@ QtObject {
     signal hoverRequested(int at)
     // Esc in normal mode, or :noh: search highlights should go.
     signal highlightsCleared()
+    // :help, or :help topic.
+    signal helpRequested(string topic)
 
     readonly property bool isMac: Qt.platform.os === "osx"
     readonly property var operators: ["d", "c", "y", ">", "<", "g~", "gu", "gU", "g?"]
@@ -2292,6 +2294,8 @@ QtObject {
         }
         else if (/^se(t)?(\s|$)/.test(c))
             setOptions(c.replace(/^\S+\s*/, ""));
+        else if (/^h(elp)?(\s|$)/.test(c))
+            helpRequested(c.replace(/^\S+\s*/, ""));
         else
             showError("E492: Not an editor command: " + c);
     }

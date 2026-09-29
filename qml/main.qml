@@ -139,6 +139,13 @@ ApplicationWindow {
         }
     }
 
+    HelpPanel {
+        id: help
+
+        editor: editor
+        zoom: root.fontSize / root.defaultFontSize
+    }
+
     SettingsWindow {
         id: settingsWindow
 
@@ -191,6 +198,10 @@ ApplicationWindow {
                 vim.showError("E37: No write since last change (add ! to override)");
         }
         onHoverRequested: at => hover.show(at, false)
+        onHelpRequested: topic => {
+            if (!help.show(topic))
+                vim.showError("E149: Sorry, no help for " + topic);
+        }
         onCursorChanged: hover.hide()
     }
 
