@@ -121,6 +121,11 @@ VimEdit: a plain-text editor in Rust + Qt 6 via cxx-qt 0.10, with the UI in QML.
   still use the natural (taller) height on emoji lines, so VimEdit draws the
   selection itself (under the text, `z: -0.5`), and all overlays use
   `editor.bandAt` (the font's height, snapped to the line grid).
+- **Line numbers** (`:set nu`/`rnu`, `vim.number`/`vim.relativeNumber`): the
+  `gutter` is a child of the `TextArea` (so it scrolls with the text), kept at
+  `contentX` and drawn over text scrolled under it. The styles hard-code
+  `leftPadding` (7 on macOS, `padding + 4` in Fusion), so the editor keeps the
+  style's value and adds the gutter width to it. Only visible lines get a row.
 - Don't make a QML binding depend on something by reading it as a bare statement
   (`editor.revision;`): the app's QML is compiled ahead of time, which can drop it,
   though `qmltestrunner` keeps it. Use the value, e.g. `TextMetrics.advanceWidth`

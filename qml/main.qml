@@ -195,6 +195,11 @@ ApplicationWindow {
             onSelectedTextChanged: vim.syncFromEditor()
             onRevisionChanged: hover.hide()
             onActiveFocusChanged: if (!activeFocus) hover.hide()
+            // Make room for the line numbers beside the style's padding.
+            Component.onCompleted: {
+                const base = leftPadding;
+                leftPadding = Qt.binding(() => base + gutter.columnWidth);
+            }
             Keys.onPressed: event => {
                 if (event.matches(StandardKey.Copy) && hover.copySelection()) {
                     event.accepted = true;
@@ -261,7 +266,7 @@ ApplicationWindow {
 
                 property var spots: []
                 readonly property var inputs: [vim.cursors, editor.revision, editor.font,
-                    editor.contentWidth, editor.contentHeight]
+                    editor.contentWidth, editor.contentHeight, editor.leftPadding]
 
                 function refresh() {
                     const t = editor.text;
@@ -314,7 +319,7 @@ ApplicationWindow {
                 readonly property var inputs: [editor.selectionStart, editor.selectionEnd, editor.revision,
                     vim.mode, vim.anchor, vim.cursor, vim.wantCol,
                     scrollView.contentItem.contentY, scrollView.contentItem.height,
-                    editor.contentWidth, editor.contentHeight]
+                    editor.contentWidth, editor.contentHeight, editor.leftPadding]
 
                 function refresh() {
                     spans = []; // recompute every rectangle, as for `highlights`
@@ -360,7 +365,8 @@ ApplicationWindow {
                 readonly property var inputs: [editor.revision, vim.commandLine, vim.highlightPattern,
                     vim.searchTarget, findBar.active, findBar.matches, findBar.current,
                     scrollView.contentItem.contentY, scrollView.contentItem.height,
-                    editor.contentWidth, editor.contentHeight] // these follow font size changes
+                    editor.contentWidth, editor.contentHeight, // these follow font size changes
+                    editor.leftPadding] // and this the line numbers
 
                 function refresh() {
                     // The Repeater keeps its delegates when the new spans equal
@@ -425,13 +431,17 @@ ApplicationWindow {
                     function onRevisionChanged() {
                         Qt.callLater(block.refresh);
                     }
-                    // Also follow layout changes: padding set by the style, and
-                    // font size changes (which move the cursor rectangle only
-                    // once it's next updated, so also watch the content size).
+                    // Also follow layout changes: padding set by the style or
+                    // the line numbers, and font size changes (which move the
+                    // cursor rectangle only once it's next updated, so also
+                    // watch the content size).
                     function onCursorRectangleChanged() {
                         Qt.callLater(block.refresh);
                     }
                     function onFontChanged() {
+                        Qt.callLater(block.refresh);
+                    }
+                    function onLeftPaddingChanged() {
                         Qt.callLater(block.refresh);
                     }
                     function onContentWidthChanged() {
@@ -472,6 +482,77 @@ ApplicationWindow {
                     font: editor.font
                     color: editor.palette.base
                     textFormat: Text.PlainText
+                }
+            }
+
+            // Line numbers (:set number / relativenumber) for the visible
+            // lines, in the left padding. It stays put when the text scrolls
+            // sideways, and covers the text that scrolls under it. As in vim,
+            // with both options the cursor's line shows its own number, on
+            // the left.
+            Rectangle {
+                id: gutter
+
+                readonly property bool shown: vim.number || vim.relativeNumber
+                property int digits: 3
+                // Room for the numbers and two spaces after them.
+                readonly property real columnWidth: shown ? (digits + 2) * digitMetrics.advanceWidth : 0
+                property var rows: []
+                readonly property var inputs: [shown, vim.number, vim.relativeNumber, vim.cursor,
+                    editor.revision, scrollView.contentItem.contentY, scrollView.contentItem.height,
+                    editor.contentHeight, root.lineHeight]
+
+                function refresh() {
+                    if (!shown) {
+                        rows = [];
+                        return;
+                    }
+                    const t = editor.text, f = scrollView.contentItem, h = root.lineHeight;
+                    const count = vim.countLines(t);
+                    digits = Math.max(3, String(count).length);
+                    const current = vim.lineOf(t, vim.cursor) - 1;
+                    const top = Math.max(0, Math.floor((f.contentY - editor.topPadding) / h));
+                    const bottom = Math.min(count - 1, Math.ceil((f.contentY + f.height - editor.topPadding) / h));
+                    const list = [];
+                    for (let i = top; i <= bottom; i++) {
+                        const own = i === current && vim.number;
+                        list.push({ line: i, current: i === current, left: own && vim.relativeNumber,
+                            label: String(vim.relativeNumber && !own ? Math.abs(i - current) : i + 1) });
+                    }
+                    rows = list;
+                }
+
+                onInputsChanged: Qt.callLater(refresh)
+
+                visible: shown
+                x: scrollView.contentItem.contentX
+                width: editor.leftPadding
+                height: editor.height
+                color: editor.palette.base
+
+                TextMetrics {
+                    id: digitMetrics
+
+                    font: editor.font
+                    text: "0"
+                }
+
+                Repeater {
+                    model: gutter.rows
+
+                    Text {
+                        required property var modelData
+
+                        x: editor.leftPadding - gutter.columnWidth
+                        y: editor.topPadding + modelData.line * root.lineHeight + editor.textBaseline - baselineOffset
+                        width: gutter.digits * digitMetrics.advanceWidth
+                        horizontalAlignment: modelData.left ? Text.AlignLeft : Text.AlignRight
+                        text: modelData.label
+                        font: editor.font
+                        color: modelData.current ? editor.color
+                            : Qt.tint(editor.palette.base, editor.palette.base.hslLightness < 0.5 ? "#80ffffff" : "#80000000")
+                        textFormat: Text.PlainText
+                    }
                 }
             }
         }

@@ -29,6 +29,9 @@ QtObject {
     property int commandCursor: 1
     property string message: ""
     property bool messageIsError: false
+    // :set number and :set relativenumber (the view draws the line numbers).
+    property bool number: false
+    property bool relativeNumber: false
 
     readonly property bool isVisual: mode === "visual" || mode === "visualLine" || mode === "visualBlock"
     readonly property string cursorShape: mode === "insert" ? "bar"
@@ -2261,8 +2264,48 @@ QtObject {
             highlightPattern = "";
             highlightsCleared();
         }
+        else if (/^se(t)?(\s|$)/.test(c))
+            setOptions(c.replace(/^\S+\s*/, ""));
         else
             showError("E492: Not an editor command: " + c);
+    }
+
+    // The boolean options :set knows: full name, short name, property.
+    readonly property var options: [
+        { name: "number", short: "nu", property: "number" },
+        { name: "relativenumber", short: "rnu", property: "relativeNumber" }
+    ]
+
+    // :set with args like "nu", "nonu", "nu!", "invnu", "nu?" or "nu&". No
+    // args lists the options that are on.
+    function setOptions(args) {
+        const words = args.split(/\s+/).filter(w => w);
+        const shown = [];
+        if (!words.length)
+            shown.push(...options.filter(o => vim[o.property]).map(o => "  " + o.name));
+        for (const w of words) {
+            const m = /^(no|inv)?([a-z]+)([!?&]?)$/.exec(w);
+            const o = m && options.find(o => o.name === m[2] || o.short === m[2]);
+            if (!o) {
+                showError("E518: Unknown option: " + w);
+                return;
+            }
+            const prefix = m[1] || "", suffix = m[3];
+            if (prefix && suffix) {
+                showError("E474: Invalid argument: " + w);
+                return;
+            }
+            if (suffix === "?")
+                shown.push((vim[o.property] ? "  " : "no") + o.name);
+            else if (suffix === "&")
+                vim[o.property] = false;
+            else if (suffix === "!" || prefix === "inv")
+                vim[o.property] = !vim[o.property];
+            else
+                vim[o.property] = prefix !== "no";
+        }
+        if (shown.length)
+            showMessage(shown.join(" "));
     }
 
     // ---- Motions -----------------------------------------------------------
@@ -2710,7 +2753,8 @@ QtObject {
         const r = editor.positionToRectangle(searchTarget);
         const maxX = Math.max(0, flickable.contentWidth - flickable.width);
         const maxY = Math.max(0, flickable.contentHeight - flickable.height);
-        const x = r.x < searchView.x || r.x + r.width > searchView.x + flickable.width
+        // Text in the left padding is under the line numbers, if they're on.
+        const x = r.x < searchView.x + editor.leftPadding || r.x + r.width > searchView.x + flickable.width
             ? r.x - flickable.width / 2 : searchView.x;
         const y = r.y < searchView.y || r.y + r.height > searchView.y + flickable.height
             ? r.y - flickable.height / 2 : searchView.y;
