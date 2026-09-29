@@ -51,10 +51,12 @@ text and other keys. `:h topic` goes straight to one, e.g. `:h set` or
 
 Cmd+F opens a find bar like VS Code's, and Cmd+Option+F (Ctrl+H on Windows and
 Linux) opens it with a replace field. Enter and Shift+Enter go to the next and
-previous match, which moves vim's cursor there. In the replace field Enter
-replaces the current match, and Cmd+Enter (Ctrl+Alt+Enter) replaces them all.
-Ctrl+Option+C, W and R (Alt+C, W and R) toggle Match Case, Match Whole Word and
-Use Regular Expression. Esc closes it.
+previous match, which moves vim's cursor there, and so do Cmd+G and Shift+Cmd+G
+(F3 and Shift+F3, or Ctrl+G and Ctrl+Shift+G, on Windows and Linux), even with
+the editor focused. In the replace field Enter replaces the current match, and
+Cmd+Enter (Ctrl+Alt+Enter) replaces them all. Ctrl+Option+C, W and R (Alt+C, W
+and R) toggle Match Case, Match Whole Word and Use Regular Expression. Esc
+closes it.
 
 ## Settings
 

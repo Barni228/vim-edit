@@ -1153,14 +1153,16 @@ ApplicationWindow {
                     shortcut: StandardKey.Replace // Ctrl+H, as in VS Code
                     onTriggered: findBar.open(true)
                 }
+                // F3, plus Ctrl+G from findNextShortcut. Written out, since
+                // an Action takes only the first of a StandardKey's keys.
                 Action {
                     text: qsTr("Find &Next")
-                    shortcut: StandardKey.FindNext
+                    shortcut: "F3"
                     onTriggered: findBar.findNext(1)
                 }
                 Action {
                     text: qsTr("Find &Previous")
-                    shortcut: StandardKey.FindPrevious
+                    shortcut: "Shift+F3"
                     onTriggered: findBar.findNext(-1)
                 }
             }
@@ -1196,6 +1198,21 @@ ApplicationWindow {
         enabled: !root.isMac
         sequences: [StandardKey.ZoomIn]
         onActivated: root.zoom(1)
+    }
+
+    // Windows / Linux: the menu's Find Next and Find Previous are F3 and
+    // Shift+F3; these add Ctrl+G and Ctrl+Shift+G, like Cmd+G on macOS.
+    Shortcut {
+        id: findNextShortcut
+
+        enabled: !root.isMac
+        sequence: "Ctrl+G"
+        onActivated: findBar.findNext(1)
+    }
+    Shortcut {
+        enabled: !root.isMac
+        sequence: "Ctrl+Shift+G"
+        onActivated: findBar.findNext(-1)
     }
 
     // Windows / Linux: Fusion frames a TextArea like a text field, which

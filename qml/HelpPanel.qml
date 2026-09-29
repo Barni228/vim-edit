@@ -90,6 +90,8 @@ Popup {
                 ["n  N", "Next or previous match."],
                 ["*  #", "Search for the word under the cursor."],
                 [cmdKey + "F", "The find bar. Its matches are highlighted while it's open."],
+                [isMac ? "⌘G  ⇧⌘G" : "F3  Shift+F3  Ctrl+G  Ctrl+Shift+G",
+                    "Next or previous find bar match (opens the bar if it has nothing to find)."],
                 [isMac ? "⌘⌥F" : "Ctrl+H", "Find and replace."],
                 [isMac ? "⌃⌥C  ⌃⌥W  ⌃⌥R" : "Alt+C  Alt+W  Alt+R",
                     "In the find bar: match case, whole word, regular expression."]
