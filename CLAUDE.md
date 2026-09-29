@@ -79,7 +79,8 @@ VimEdit: a plain-text editor in Rust + Qt 6 via cxx-qt 0.10, with the UI in QML.
   `I`/`A`/`c` put an extra cursor on each other line (see below); `blockHome`
   makes Esc remove them and go back to the start. Ctrl+V is Paste on Windows,
   so `handleKey` lets it through as `<C-v>` outside insert mode; in insert mode
-  it pastes on every OS.
+  it pastes on every OS. Likewise Ctrl+Y (Redo on Windows, Paste in Qt's
+  macOS bindings) scrolls outside insert mode.
 - **Multiple cursors**: `vim.cursors` holds the extra ones (Alt+click via a
   `MouseArea` over the editor, which passes plain clicks through). The editor
   knows one cursor, so with extras vim handles insert-mode typing and arrows

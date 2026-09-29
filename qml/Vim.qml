@@ -60,9 +60,9 @@ QtObject {
         "<C-d>", "<C-u>", "<C-f>", "<C-b>", "<PageDown>", "<PageUp>"]
     readonly property var normalActions: ["i", "a", "I", "A", "gI", "o", "O", "v", "V", "x", "<Del>", "X",
         "s", "S", "C", "D", "Y", "p", "P", "J", "gJ", "u", "<C-r>", ".", "~", "r", "R", ":", "/", "?",
-        "ZZ", "ZQ", "zz", "zt", "zb", "gv", "gh", "<C-a>", "<C-x>", "q", "@", "<C-v>", "<Esc>"]
+        "ZZ", "ZQ", "zz", "zt", "zb", "<C-e>", "<C-y>", "gv", "gh", "<C-a>", "<C-x>", "q", "@", "<C-v>", "<Esc>"]
     readonly property var visualActions: ["<Esc>", "v", "V", "<C-v>", "o", "O", "x", "<Del>", "X", "D", "s",
-        "C", "S", "R", "Y", "~", "u", "U", "r", "J", "gJ", "p", "P", ":", "/", "?", "q", "I", "A"]
+        "C", "S", "R", "Y", "~", "u", "U", "r", "J", "gJ", "p", "P", ":", "/", "?", "q", "I", "A", "<C-e>", "<C-y>"]
     // Normal-mode commands that run at every cursor (as do operators and
     // motions). "." does too, through the command it repeats.
     readonly property var everyCursorActions: ["i", "a", "I", "A", "gI", "o", "O", "x", "<Del>", "X", "s",
@@ -151,7 +151,10 @@ QtObject {
             return typedKey(tokenFor(event), event);
         if (!isVisual && mode !== "insert")
             message = "";
-        if (event.matches(StandardKey.Undo) || event.matches(StandardKey.Redo)) {
+        // Ctrl+Y is also Redo on Windows and Linux, and Paste (yank) on
+        // macOS, except outside insert mode, where it scrolls as in vim.
+        const scrollKey = mode !== "insert" && tokenFor(event) === "<C-y>";
+        if ((event.matches(StandardKey.Undo) || event.matches(StandardKey.Redo)) && !scrollKey) {
             nativeUndo(event.matches(StandardKey.Redo));
             return true;
         }
@@ -199,7 +202,7 @@ QtObject {
                     execute({ reg: "+", count: 0, action: "d" });
                 return true;
             }
-            if (event.matches(StandardKey.Paste) && !blockKey) {
+            if (event.matches(StandardKey.Paste) && !blockKey && !scrollKey) {
                 if (mode !== "replace")
                     execute({ reg: "+", count: 0, action: "P" });
                 return true;
@@ -995,6 +998,10 @@ QtObject {
         case "zb":
             scrollToCursor(cmd.action[1]);
             break;
+        case "<C-e>":
+        case "<C-y>":
+            scrollText(cmd.action === "<C-e>" ? count : -count);
+            break;
         case "<Esc>":
             highlightPattern = "";
             cursors = [];
@@ -1073,6 +1080,10 @@ QtObject {
         }
         if (a === "q") {
             startRecording(cmd.ch);
+            return;
+        }
+        if (a === "<C-e>" || a === "<C-y>") {
+            scrollText(a === "<C-e>" ? count : -count);
             return;
         }
         if (mode === "visualBlock" && executeBlock(cmd))
@@ -3160,6 +3171,25 @@ QtObject {
             f.contentX = Math.max(0, r.x - editor.leftPadding);
         else if (r.x + r.width > f.contentX + f.width)
             f.contentX = Math.min(maxX, r.x + r.width - f.width);
+    }
+
+    // Ctrl-E and Ctrl-Y: scrolls the view `lines` whole lines (down if
+    // positive), and moves the cursor only as far as keeps it in view.
+    function scrollText(lines) {
+        if (!flickable)
+            return;
+        const f = flickable, h = lineHeight, pad = editor.topPadding;
+        const at = Math.max(0, (f.contentY - pad) / h); // the top line, maybe partly hidden
+        const top = Math.max(0, lines > 0 ? Math.floor(at + 1e-6) + lines : Math.ceil(at - 1e-6) + lines);
+        f.contentY = top === 0 ? 0 : Math.min(Math.max(0, f.contentHeight - f.height), pad + top * h);
+        const t = editor.text, n = countLines(t);
+        const first = Math.min(n - 1, Math.max(0, Math.ceil((f.contentY - pad) / h - 1e-6)));
+        // A line counts as shown with the space below its text cut off.
+        const last = Math.max(first, Math.min(n - 1, Math.floor((f.contentY + f.height - pad) / h + 0.25) - 1));
+        const line = lineOf(t, cursor) - 1;
+        const d = line < first ? first - line : line > last ? last - line : 0;
+        if (d)
+            moveBy({ count: Math.abs(d), motion: { name: d > 0 ? "j" : "k" } });
     }
 
     function scrollToCursor(where) {
